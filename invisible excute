@@ -1,14 +1,56 @@
-local function getInvisAPI()
-    if InvisibleAPI then return InvisibleAPI end
+-- [ Invisible API Module by Miyako ]
+-- Khusus di-loadstring ke script utama Obsidian
+
+_G.MengHub = _G.MengHub or {}
+
+-- 1. Muat Invisible Engine terbaru (Tatsumakimaki Source)
+local success, err = pcall(function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/Tatsumakimaki/Hisoka-Morou/refs/heads/master/invisible"))()
+end)
+
+-- 2. Pastikan API terdaftar di Global Namespace
+local function resolveInvisibleAPI()
     if _G.MengHub and _G.MengHub.Invisible then
-        InvisibleAPI = _G.MengHub.Invisible
-        return InvisibleAPI
+        return _G.MengHub.Invisible
     end
-    pcall(function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/Tatsumakimaki/Hisoka-Morou/refs/heads/master/invisible"))()
-    end)
-    if _G.MengHub and _G.MengHub.Invisible then
-        InvisibleAPI = _G.MengHub.Invisible
+    if _G.Invisible then
+        return _G.Invisible
     end
-    return InvisibleAPI
+    return nil
 end
+
+local API = resolveInvisibleAPI()
+
+-- 3. Sediakan Interface Controller Standar untuk Script Utama
+local Controller = {}
+Controller.Loaded = (API ~= nil)
+
+function Controller.enable()
+    local targetAPI = resolveInvisibleAPI()
+    if targetAPI and targetAPI.enable then
+        return pcall(function() targetAPI.enable() end)
+    end
+    return false
+end
+
+function Controller.disable()
+    local targetAPI = resolveInvisibleAPI()
+    if targetAPI and targetAPI.disable then
+        return pcall(function() targetAPI.disable() end)
+    end
+    return false
+end
+
+function Controller.toggle(state)
+    if state then
+        Controller.enable()
+    else
+        Controller.disable()
+    end
+end
+
+-- Export ke Global agar script utama langsung bisa mengontrolnya
+_G.MiyakoInvisible = Controller
+_G.MengHub.Invisible = _G.MengHub.Invisible or Controller
+
+return Controller
