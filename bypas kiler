@@ -1,5 +1,5 @@
 -- ==========================================================
--- FILE GITHUB: BYPASS KILER (STANDALONE LOADSTRING)
+-- FILE GITHUB: BYPASS KILER (STANDALONE LOADSTRING - FIXED COOLDOWN)
 -- ==========================================================
 local Tabs = getgenv().Tabs
 local Library = getgenv().Library
@@ -14,8 +14,49 @@ if not Tabs or not Tabs.Streamer then
     return
 end
 
--- Membuat Groupbox khusus di Tab Streamer
 local BypassKillerBox = Tabs.Streamer:AddLeftGroupbox("Bypass Kiler", "shield-alert")
+
+-- ==========================================
+-- METAMETHOD HOOK (GABUNGAN UNTUK CARRY, FRENZY, & PURSUIT)
+-- ==========================================
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+setreadonly(mt, false)
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    
+    if not checkcaller() then
+        -- 1. Blokir deteksi "IsCarrying"
+        if getgenv().BypassCarryEnabled and method == "GetAttribute" then
+            if args[1] == "IsCarrying" then
+                return false
+            end
+        end
+        
+        -- 2. Blokir sinyal penutup skill ke server (Jeff & Jason)
+        if method == "FireServer" then
+            local ok, name = pcall(function() return self.Name end)
+            if ok then
+                if getgenv().InfFrenzyEnabled and (name == "Deactivatefromclient" or name == "PowerDoneDeactivating") then
+                    return nil
+                end
+                if getgenv().InfPursuitEnabled and name == "Pursuit" then
+                    if #args > 0 and args[1] == false then
+                        return nil
+                    end
+                end
+            end
+        end
+    end
+    
+    return oldNamecall(self, ...)
+end)
+setreadonly(mt, true)
+
+-- ==========================================
+-- FITUR TOGGLE
+-- ==========================================
 
 -- 1. Auto Stalk (Myers)
 local AutoStalk = { Enabled = false, StalkRange = 150 }
@@ -30,8 +71,7 @@ local function getClosestSurvivorForStalk()
             if hum and hrp and hum.Health > 30 then
                 local dist = (hrp.Position - root.Position).Magnitude
                 if dist <= AutoStalk.StalkRange and dist < shortest then
-                    shortest = dist
-                    closest = plr
+                    shortest = dist; closest = plr
                 end
             end
         end
@@ -39,8 +79,8 @@ local function getClosestSurvivorForStalk()
     return closest
 end
 
-BypassKillerBox:AddToggle("AutoStalk", {
-    Text = "Auto Stalk (Myers)",
+BypassKillerBox:AddCheckbox("AutoStalk", {
+    Text = "Auto Stalk",
     Default = false,
     Callback = function(v)
         AutoStalk.Enabled = v
@@ -53,41 +93,19 @@ BypassKillerBox:AddToggle("AutoStalk", {
                     and ReplicatedStorage.Remotes:FindFirstChild("Killers", true)
                     and ReplicatedStorage.Remotes.Killers:FindFirstChild("Stalker", true)
                     and ReplicatedStorage.Remotes.Killers.Stalker:FindFirstChild("StartStalking")
-                if stalkEvent then
-                    pcall(function() stalkEvent:FireServer(target) end)
-                end
+                if stalkEvent then pcall(function() stalkEvent:FireServer(target) end) end
             end)
         else
-            if getgenv().StalkConn then
-                getgenv().StalkConn:Disconnect()
-                getgenv().StalkConn = nil
-            end
+            if getgenv().StalkConn then getgenv().StalkConn:Disconnect(); getgenv().StalkConn = nil end
         end
     end
 })
 
 -- 2. Unlock Skills While Carrying
-local mt = getrawmetatable(game)
-local oldNamecall = mt.__namecall
-setreadonly(mt, false)
-mt.__namecall = newcclosure(function(self, ...)
-    local method = getnamecallmethod()
-    local args = {...}
-    if getgenv().BypassCarryEnabled and method == "GetAttribute" and not checkcaller() then
-        if args[1] == "IsCarrying" then
-            return false
-        end
-    end
-    return oldNamecall(self, ...)
-end)
-setreadonly(mt, true)
-
-BypassKillerBox:AddToggle("UnlockCarry", {
-    Text = "Unlock Skills While Carrying",
+BypassKillerBox:AddCheckbox("UnlockCarry", {
+    Text = "Unlock Carry Skills",
     Default = false,
-    Callback = function(v)
-        getgenv().BypassCarryEnabled = v
-    end
+    Callback = function(v) getgenv().BypassCarryEnabled = v end
 })
 
 -- 3. Counter Auto Parry
@@ -116,9 +134,7 @@ task.spawn(function()
         for _, p in pairs(Players:GetPlayers()) do
             if p ~= LocalPlayer and p.Team and p.Team.Name == "Survivors" then
                 local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-                if r and (myRoot.Position - r.Position).Magnitude <= 15 then
-                    near = true; break
-                end
+                if r and (myRoot.Position - r.Position).Magnitude <= 15 then near = true; break end
             end
         end
         if near then
@@ -136,16 +152,14 @@ task.spawn(function()
     end
 end)
 
-BypassKillerBox:AddToggle("CounterAutoParry", {
+BypassKillerBox:AddCheckbox("CounterAutoParry", {
     Text = "Counter Auto Parry",
     Default = false,
-    Callback = function(v)
-        getgenv().AntiAutoParryEnabled = v
-    end
+    Callback = function(v) getgenv().AntiAutoParryEnabled = v end
 })
 
 -- 4. Infinite Lunge
-BypassKillerBox:AddToggle("InfiniteLunge", {
+BypassKillerBox:AddCheckbox("InfiniteLunge", {
     Text = "Infinite Lunge",
     Default = false,
     Callback = function(v)
@@ -156,8 +170,8 @@ BypassKillerBox:AddToggle("InfiniteLunge", {
 })
 
 -- 5. Infinite Frenzy (Jeff)
-BypassKillerBox:AddToggle("InfFrenzy", {
-    Text = "Infinite Frenzy (Jeff)",
+BypassKillerBox:AddCheckbox("InfFrenzy", {
+    Text = "Inf. Frenzy (Jeff)",
     Default = false,
     Callback = function(v)
         getgenv().InfFrenzyEnabled = v
@@ -166,9 +180,7 @@ BypassKillerBox:AddToggle("InfFrenzy", {
                 while getgenv().InfFrenzyEnabled do
                     pcall(function()
                         local char = LocalPlayer.Character
-                        if char and char:GetAttribute("Frenzy") ~= true then
-                            char:SetAttribute("Frenzy", true)
-                        end
+                        if char and char:GetAttribute("Frenzy") ~= true then char:SetAttribute("Frenzy", true) end
                     end)
                     task.wait(0.1)
                 end
@@ -183,8 +195,8 @@ BypassKillerBox:AddToggle("InfFrenzy", {
 })
 
 -- 6. Infinite Pursuit (Jason)
-BypassKillerBox:AddToggle("InfPursuit", {
-    Text = "Infinite Pursuit (Jason)",
+BypassKillerBox:AddCheckbox("InfPursuit", {
+    Text = "Inf. Pursuit (Jason)",
     Default = false,
     Callback = function(v)
         getgenv().InfPursuitEnabled = v
@@ -193,9 +205,7 @@ BypassKillerBox:AddToggle("InfPursuit", {
                 while getgenv().InfPursuitEnabled do
                     pcall(function()
                         local char = LocalPlayer.Character
-                        if char and char:GetAttribute("Pursuit") ~= true then
-                            char:SetAttribute("Pursuit", true)
-                        end
+                        if char and char:GetAttribute("Pursuit") ~= true then char:SetAttribute("Pursuit", true) end
                     end)
                     task.wait(0.1)
                 end
@@ -210,8 +220,8 @@ BypassKillerBox:AddToggle("InfPursuit", {
 })
 
 -- 7. Infinite Hidden (Leap)
-BypassKillerBox:AddToggle("InfHidden", {
-    Text = "Infinite Hidden (Leap)",
+BypassKillerBox:AddCheckbox("InfHidden", {
+    Text = "Inf. Hidden (Leap)",
     Default = false,
     Callback = function(v)
         getgenv().BypassLeapEnabled = v
@@ -229,9 +239,7 @@ BypassKillerBox:AddToggle("InfHidden", {
                     for _, fn in pairs({leapFunction, m2Function}) do
                         if fn then
                             for i, val in pairs(debug.getupvalues(fn)) do
-                                if type(val) == "boolean" and val == true then
-                                    debug.setupvalue(fn, i, false)
-                                end
+                                if type(val) == "boolean" and val == true then debug.setupvalue(fn, i, false) end
                             end
                         end
                     end
@@ -251,7 +259,7 @@ UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton2 then Aiming = false end
 end)
 
-BypassKillerBox:AddToggle("AimLockHidden", {
+BypassKillerBox:AddCheckbox("AimLockHidden", {
     Text = "Aim Lock Hidden",
     Default = false,
     Callback = function(state)
@@ -289,34 +297,40 @@ BypassKillerBox:AddToggle("AimLockHidden", {
 })
 
 -- 9. Infinite Abyss
-BypassKillerBox:AddToggle("InfAbyss", {
+local CorruptHandlerFunc = nil
+BypassKillerBox:AddCheckbox("InfAbyss", {
     Text = "Infinite Abyss",
     Default = false,
     Callback = function(state)
         getgenv().InfAbyssEnabled = state
         if state then
-            task.spawn(function()
-                local CorruptHandlerFunc = nil
+            if not CorruptHandlerFunc then
                 for _, fn in pairs(getgc(true)) do
                     if type(fn) == "function" and islclosure(fn) then
                         local constants = debug.getconstants(fn)
                         if table.find(constants, "corrupt") and table.find(constants, "Immobile") then
-                            CorruptHandlerFunc = fn
-                            break
+                            CorruptHandlerFunc = fn; break
                         end
                     end
                 end
-                while getgenv().InfAbyssEnabled do
-                    if CorruptHandlerFunc then
-                        for idx, val in pairs(debug.getupvalues(CorruptHandlerFunc)) do
-                            if type(val) == "boolean" and val == false then
-                                debug.setupvalue(CorruptHandlerFunc, idx, true)
-                            end
+            end
+            
+            if getgenv().AbyssConn then getgenv().AbyssConn:Disconnect() end
+            getgenv().AbyssConn = RunService.Heartbeat:Connect(function()
+                if not getgenv().InfAbyssEnabled then return end
+                if CorruptHandlerFunc then
+                    for idx, val in pairs(debug.getupvalues(CorruptHandlerFunc)) do
+                        if type(val) == "boolean" and val == false then
+                            debug.setupvalue(CorruptHandlerFunc, idx, true)
                         end
                     end
-                    task.wait(0.1)
                 end
             end)
+        else
+            if getgenv().AbyssConn then 
+                getgenv().AbyssConn:Disconnect() 
+                getgenv().AbyssConn = nil 
+            end
         end
     end
 })
