@@ -1,0 +1,815 @@
+-- ==========================================================
+-- MIYAKO V1: VEIL SILENT SPEAR (ULTIMATE TUNED - CENTER GUI BUILD)
+-- Fitur: Center Start GUI, Smooth Lerp Drag, Killer Verification & Pure FOV.
+-- UPDATE: Exact Original (<286 Studs) & Optimized Boost Arc (286-290 Studs).
+-- EXTRA: Added V2 Prediction Mode. Split Buttons for V1 and V2.
+-- ==========================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+
+local Config = {
+    Enabled = false,
+    ShowFOV = true,
+    ShowTrajectory = true,
+    FOV = 450,
+    SpearSpeed = 165,
+    Gravity = workspace.Gravity * 0.50, -- 98.1 Kalibrasi asli server
+    TargetPart = "HumanoidRootPart", 
+    PredictMode = "OFF", -- "OFF", "V1", atau "V2"
+    Veil_LeadMultiplier = 1.4, -- Khusus V2
+}
+
+local State = {
+    chargingSpear = false,
+    touchInput = nil,
+    attackCooldown = false,
+}
+
+local renderConn = nil
+local inputBeganConn = nil
+local inputEndedConn = nil
+
+-- ==========================================
+-- VISUALS: FOV & PURPLE TRAJECTORY + HIT DOT
+-- ==========================================
+local FOVCircle
+pcall(function()
+    if typeof(Drawing) == "table" and Drawing.new then
+        FOVCircle = Drawing.new("Circle")
+        FOVCircle.Color = Color3.fromRGB(170, 0, 255)
+        FOVCircle.Thickness = 1.5
+        FOVCircle.Filled = false
+        FOVCircle.Visible = false
+    end
+end)
+
+local PathFolder = workspace:FindFirstChild("MIYAKO_Trajectory")
+if PathFolder then PathFolder:Destroy() end
+PathFolder = Instance.new("Folder")
+PathFolder.Name = "MIYAKO_Trajectory"
+PathFolder.Parent = workspace
+
+local TrajectoryParts = {}
+local SEGMENTS = 15
+
+for i = 1, SEGMENTS do
+    local p = Instance.new("Part")
+    p.Anchored = true
+    p.CanCollide = false
+    p.Material = Enum.Material.Neon
+    p.Color = Color3.fromRGB(170, 0, 255)
+    p.Size = Vector3.new(0.15, 0.15, 1)
+    p.Transparency = 1
+    p.Parent = PathFolder
+    TrajectoryParts[i] = p
+end
+
+local HitDot = Instance.new("Part")
+HitDot.Name = "MIYAKO_HitDot"
+HitDot.Shape = Enum.PartType.Ball
+HitDot.Size = Vector3.new(0.8, 0.8, 0.8)
+HitDot.Anchored = true
+HitDot.CanCollide = false
+HitDot.Material = Enum.Material.Neon
+HitDot.Color = Color3.fromRGB(170, 0, 255)
+HitDot.Transparency = 1
+HitDot.Parent = PathFolder
+
+-- ==========================================
+-- LOGIKA BALISTIK (ORIGINAL < 286 & TUNED 286-290)
+-- ==========================================
+local function calculateAimVector(startPos, targetPos)
+    local speed = Config.SpearSpeed
+    local g = Config.Gravity
+
+    local rawDiff = targetPos - startPos
+    local horizontalDist = Vector3.new(rawDiff.X, 0, rawDiff.Z).Magnitude
+
+    if horizontalDist < 286 then
+        local adjustedTarget = targetPos + Vector3.new(0, 0.8, 0)
+        local diff = adjustedTarget - startPos
+        local horizontalDiff = Vector3.new(diff.X, 0, diff.Z)
+        local x = horizontalDiff.Magnitude
+        local y = diff.Y
+
+        local v2 = speed * speed
+        local v4 = v2 * v2
+
+        local insideRoot = v4 - g * (g * (x * x) + 2 * y * v2)
+        
+        local theta
+        if insideRoot < 0 or x <= 0.1 then
+            theta = math.rad(42)
+        else
+            local tanTheta = (v2 - math.sqrt(insideRoot)) / (g * x)
+            theta = math.atan(tanTheta)
+        end
+
+        local cosTheta = math.cos(theta)
+        local sinTheta = math.sin(theta)
+        local dir2D = horizontalDiff.Magnitude > 0 and horizontalDiff.Unit or Vector3.new(0, 0, 1)
+
+        local aimDir = Vector3.new(dir2D.X * cosTheta, sinTheta, dir2D.Z * cosTheta).Unit
+        local flightTime = x / (speed * math.max(cosTheta, 0.1))
+        
+        return aimDir, flightTime, g
+    end
+
+    local delta = math.clamp(horizontalDist - 285, 1, 5)
+    
+    local diff = targetPos - startPos
+    local horizontalDiff = Vector3.new(diff.X, 0, diff.Z)
+    local x = horizontalDiff.Magnitude
+
+    local boostedAngleDeg = 43.4 + (delta * 0.32)
+    local theta = math.rad(boostedAngleDeg)
+
+    local cosTheta = math.cos(theta)
+    local sinTheta = math.sin(theta)
+    local dir2D = horizontalDiff.Magnitude > 0 and horizontalDiff.Unit or Vector3.new(0, 0, 1)
+
+    local aimDir = Vector3.new(dir2D.X * cosTheta, sinTheta, dir2D.Z * cosTheta).Unit
+    local flightTime = x / (speed * math.max(cosTheta, 0.1))
+
+    return aimDir, flightTime, g
+end
+
+-- ==========================================
+-- LOGIKA PREDIKSI V2 (LEAD VELOCITY)
+-- ==========================================
+local function getV2PredictedPosition(targetPart, t)
+    local targetHRP = targetPart:IsA("Model") and targetPart:FindFirstChild("HumanoidRootPart") or targetPart
+    local targetPos = targetHRP.Position
+    local targetVel = Vector3.zero
+
+    local targetHum = targetPart.Parent and targetPart.Parent:FindFirstChildOfClass("Humanoid")
+    if targetHum and targetHum.MoveDirection.Magnitude > 0 then
+        targetVel = targetHum.MoveDirection * targetHum.WalkSpeed
+    elseif targetHRP:IsA("BasePart") then
+        targetVel = targetHRP.AssemblyLinearVelocity
+    end
+    
+    -- Kunci di sumbu horizontal X dan Z
+    targetVel = Vector3.new(targetVel.X, 0, targetVel.Z)
+    return targetPos + (targetVel * (t * Config.Veil_LeadMultiplier))
+end
+
+-- ==========================================
+-- ROLE & TARGET CHECKER
+-- ==========================================
+local function isLocalPlayerKiller()
+    local char = LocalPlayer.Character
+    if char and char:GetAttribute("spearmode") ~= nil then
+        return true
+    end
+    if LocalPlayer.Team then
+        local name = LocalPlayer.Team.Name:lower()
+        if name:find("killer") then
+            return true
+        end
+    end
+    return char and char:FindFirstChild("HumanoidRootPart") ~= nil and (char:GetAttribute("spearmode") == true or char:GetAttribute("spearmode") == false)
+end
+
+local function isSurvivorPlayer(p)
+    if p == LocalPlayer then return false end
+    if p.Team then
+        local name = p.Team.Name:lower()
+        if name:find("killer") then
+            return false
+        end
+    end
+    return true
+end
+
+local function getTargetPart(char)
+    return char:FindFirstChild(Config.TargetPart) or char:FindFirstChild("Torso")
+end
+
+local function getClosestSurvivor()
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return nil end
+
+    local cam = workspace.CurrentCamera
+    local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+    local bestDist = Config.FOV
+    local bestTarget = nil
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if isSurvivorPlayer(p) and p.Character then
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            local part = getTargetPart(p.Character)
+            
+            if hum and hum.Health > 0 and part then
+                local screenPos, onScreen = cam:WorldToViewportPoint(part.Position)
+                if onScreen then
+                    local dist2D = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+                    if dist2D < bestDist then
+                        bestDist = dist2D
+                        bestTarget = { Player = p, Part = part, Humanoid = hum }
+                    end
+                end
+            end
+        end
+    end
+    return bestTarget
+end
+
+-- ==========================================
+-- NOTIFIKASI HIT DI KEPALA SURVIVOR
+-- ==========================================
+local function spawnHitNotification(character)
+    local head = character:FindFirstChild("Head")
+    if not head then return end
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Size = UDim2.new(0, 100, 0, 40)
+    billboard.StudsOffset = Vector3.new(0, 2, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Parent = head
+
+    local text = Instance.new("TextLabel")
+    text.Size = UDim2.new(1, 0, 1, 0)
+    text.BackgroundTransparency = 1
+    text.Text = "🎯 KENA!"
+    text.TextColor3 = Color3.fromRGB(170, 0, 255)
+    text.TextStrokeTransparency = 1
+    text.TextScaled = true
+    text.Font = Enum.Font.GothamBlack
+    text.Parent = billboard
+
+    local ti = TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    TweenService:Create(billboard, ti, {StudsOffset = Vector3.new(0, 5, 0)}):Play()
+    TweenService:Create(text, ti, {TextTransparency = 1}):Play()
+
+    task.delay(1.5, function()
+        if billboard then billboard:Destroy() end
+    end)
+end
+
+-- ==========================================
+-- FUNGSI FIRE
+-- ==========================================
+local function fire()
+    if State.attackCooldown then return end
+    State.attackCooldown = true
+    task.delay(2, function() State.attackCooldown = false end)
+
+    local myChar = LocalPlayer.Character
+    local startPart = myChar and (myChar:FindFirstChild("Head") or myChar:FindFirstChild("HumanoidRootPart"))
+    if not startPart then return end
+    
+    local startPos = startPart.Position
+    local targetInfo = getClosestSurvivor()
+    local aimDir
+
+    if targetInfo and targetInfo.Part then
+        local targetPart = targetInfo.Part
+        local targetPos = targetPart.Position
+        local speed = Config.SpearSpeed
+
+        local distance = (targetPos - startPos).Magnitude
+        local t = distance / speed
+        
+        local finalTargetPos = targetPos
+
+        if Config.PredictMode == "V1" then
+            local vel = targetPart.AssemblyLinearVelocity
+            if vel and vel.Magnitude > 0.5 then
+                finalTargetPos = targetPos + (Vector3.new(vel.X, 0, vel.Z) * t)
+            else
+                local lookVector = targetPart.CFrame.LookVector
+                finalTargetPos = targetPos + (lookVector * 18.7 * t)
+            end
+        elseif Config.PredictMode == "V2" then
+            finalTargetPos = getV2PredictedPosition(targetPart, t)
+        end
+
+        aimDir = calculateAimVector(startPos, finalTargetPos)
+        
+        if targetInfo.Humanoid then
+            local hum = targetInfo.Humanoid
+            local startHealth = hum.Health
+            local hitConn
+            hitConn = hum.HealthChanged:Connect(function(newHealth)
+                if newHealth < startHealth then
+                    spawnHitNotification(targetInfo.Player.Character)
+                    if hitConn then hitConn:Disconnect() end
+                end
+            end)
+            task.delay(2, function() if hitConn then hitConn:Disconnect() end end)
+        end
+    else
+        aimDir = workspace.CurrentCamera.CFrame.LookVector
+    end
+
+    pcall(function()
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        local killers = remotes and remotes:FindFirstChild("Killers")
+        local veil = killers and killers:FindFirstChild("Veil")
+        local spear = veil and veil:FindFirstChild("Spearthrow")
+        if spear then
+            spear:FireServer(aimDir, Config.SpearSpeed, startPos)
+        end
+    end)
+end
+
+-- ==========================================
+-- METAMETHOD HOOK
+-- ==========================================
+pcall(function()
+    local old
+    old = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        if not checkcaller() and method == "FireServer" and self.Name == "Spearthrow" and Config.Enabled then
+            return nil
+        end
+        return old(self, ...)
+    end)
+end)
+
+-- ==========================================
+-- INPUT CONTROLS
+-- ==========================================
+inputBeganConn = UserInputService.InputBegan:Connect(function(input, gp)
+    local isTouch = input.UserInputType == Enum.UserInputType.Touch
+    if gp and not isTouch then return end
+    
+    local char = LocalPlayer.Character
+    local isSpearMode = char and char:GetAttribute("spearmode") == true
+    if not Config.Enabled or not isSpearMode then return end
+    
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        State.chargingSpear = true
+    elseif isTouch then
+        local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+        local slasher = pGui and pGui:FindFirstChild("Slasher-mob")
+        local ctrl = slasher and slasher:FindFirstChild("Controls")
+        local attackBtn = ctrl and ctrl:FindFirstChild("attack")
+        
+        if attackBtn and attackBtn.Visible then
+            local pos = input.Position
+            local absPos = attackBtn.AbsolutePosition
+            local absSize = attackBtn.AbsoluteSize
+            if pos.X >= absPos.X and pos.X <= absPos.X + absSize.X
+            and pos.Y >= absPos.Y and pos.Y <= absPos.Y + absSize.Y then
+                State.chargingSpear = true
+                State.touchInput = input
+            end
+        end
+    end
+end)
+
+inputEndedConn = UserInputService.InputEnded:Connect(function(input)
+    if State.chargingSpear and (input == State.touchInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+        State.chargingSpear = false
+        if State.touchInput == input then State.touchInput = nil end
+        fire()
+    end
+end)
+
+-- ==========================================
+-- RENDER LOOP: ESP, TRAJECTORY & HIT INDICATOR
+-- ==========================================
+renderConn = RunService.RenderStepped:Connect(function()
+    local cam = workspace.CurrentCamera
+    local myChar = LocalPlayer.Character
+    local isSpearMode = myChar and myChar:GetAttribute("spearmode") == true
+
+    if not isLocalPlayerKiller() or not Config.Enabled then
+        if FOVCircle then FOVCircle.Visible = false end
+        for i = 1, SEGMENTS do TrajectoryParts[i].Transparency = 1 end
+        HitDot.Transparency = 1
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then
+                local hl = p.Character:FindFirstChild("MIYAKO_Highlight")
+                if hl then hl:Destroy() end
+            end
+        end
+        return
+    end
+
+    if FOVCircle then
+        if Config.ShowFOV and isSpearMode then
+            FOVCircle.Visible = true
+            FOVCircle.Radius = Config.FOV
+            FOVCircle.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+        else
+            FOVCircle.Visible = false
+        end
+    end
+
+    for i = 1, SEGMENTS do TrajectoryParts[i].Transparency = 1 end
+    HitDot.Transparency = 1
+
+    local target = getClosestSurvivor()
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if isSurvivorPlayer(p) and p.Character then
+            local char = p.Character
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local isLockedTarget = (target and target.Player == p)
+            local hl = char:FindFirstChild("MIYAKO_Highlight")
+            
+            if isLockedTarget and hum and hum.Health > 0 then
+                if not hl then
+                    hl = Instance.new("Highlight")
+                    hl.Name = "MIYAKO_Highlight"
+                    hl.Parent = char
+                end
+                hl.FillColor = Color3.fromRGB(0, 255, 100)
+                hl.FillTransparency = 0.65
+                hl.OutlineColor = Color3.fromRGB(0, 255, 150)
+                hl.OutlineTransparency = 0.4
+            else
+                if hl then hl:Destroy() end
+            end
+        end
+    end
+
+    if not (isSpearMode and State.chargingSpear) then return end
+
+    local indicatorColor = target and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(170, 0, 255)
+    for i = 1, SEGMENTS do
+        TrajectoryParts[i].Color = indicatorColor
+    end
+    HitDot.Color = indicatorColor
+
+    if not target then return end
+
+    local originPart = myChar:FindFirstChild("Head") or myChar:FindFirstChild("HumanoidRootPart")
+    if not originPart then return end
+
+    local originPos = originPart.Position
+    local targetPart = target.Part
+    local targetPos = targetPart.Position
+    local speed = Config.SpearSpeed
+
+    local distance = (targetPos - originPos).Magnitude
+    local t = distance / speed
+    
+    local finalTargetPos = targetPos
+
+    if Config.PredictMode == "V1" then
+        local vel = targetPart.AssemblyLinearVelocity
+        if vel and vel.Magnitude > 0.5 then
+            finalTargetPos = targetPos + (Vector3.new(vel.X, 0, vel.Z) * t)
+        else
+            local lookVector = targetPart.CFrame.LookVector
+            finalTargetPos = targetPos + (lookVector * 18.7 * t)
+        end
+    elseif Config.PredictMode == "V2" then
+        finalTargetPos = getV2PredictedPosition(targetPart, t)
+    end
+
+    local aimDir, flightTime, simGravity = calculateAimVector(originPos, finalTargetPos)
+    local aimVelocity = aimDir * speed
+
+    if Config.ShowTrajectory then
+        local simTime = flightTime or (distance / speed)
+        local timeStep = simTime / SEGMENTS
+        local currentPos = originPos
+
+        for i = 1, SEGMENTS do
+            local stepTime = i * timeStep
+            local nextPos = originPos + (aimVelocity * stepTime) - Vector3.new(0, 0.5 * simGravity * (stepTime^2), 0)
+            
+            local part = TrajectoryParts[i]
+            local dist = (nextPos - currentPos).Magnitude
+            
+            part.Size = Vector3.new(0.15, 0.15, dist)
+            part.CFrame = CFrame.new((currentPos + nextPos) / 2, nextPos)
+            part.Transparency = 0.2 + (i / SEGMENTS) * 0.5 
+            
+            currentPos = nextPos
+        end
+
+        HitDot.Position = currentPos
+        HitDot.Transparency = 0.15
+    end
+end)
+
+-- ==========================================
+-- CENTER START & SMOOTH DRAGGABLE GUI
+-- ==========================================
+task.spawn(function()
+    local parent = nil
+    if typeof(gethui) == "function" then
+        pcall(function() parent = gethui() end)
+    end
+    if not parent then
+        local s, cg = pcall(function() return game:GetService("CoreGui") end)
+        if s and cg then
+            local testS = pcall(function()
+                local t = Instance.new("Folder")
+                t.Parent = cg
+                t:Destroy()
+            end)
+            if testS then parent = cg end
+        end
+    end
+    if not parent then
+        parent = LocalPlayer:WaitForChild("PlayerGui", 5)
+    end
+
+    if parent then
+        local old = parent:FindFirstChild("MIYAKO_SpearGUI_V1")
+        if old then old:Destroy() end
+    end
+    local oldPgui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("MIYAKO_SpearGUI_V1")
+    if oldPgui then oldPgui:Destroy() end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "MIYAKO_SpearGUI_V1"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 999999
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Parent = parent
+
+    local cam = workspace.CurrentCamera
+    local timeout = 0
+    while (not cam or cam.ViewportSize.X <= 100) and timeout < 30 do
+        task.wait(0.1)
+        cam = workspace.CurrentCamera
+        timeout = timeout + 1
+    end
+
+    local vpSize = (cam and cam.ViewportSize.X > 100) and cam.ViewportSize or Vector2.new(800, 600)
+    local frameW, frameH = 220, 118
+    local centerX = math.max(10, (vpSize.X / 2) - (frameW / 2))
+    local centerY = math.max(10, (vpSize.Y / 2) - (frameH / 2))
+
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "Panel"
+    MainFrame.Size = UDim2.fromOffset(frameW, frameH)
+    MainFrame.Position = UDim2.new(0, centerX, 0, centerY)
+    MainFrame.AnchorPoint = Vector2.new(0, 0)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.Parent = gui
+    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
+
+    local UIStroke = Instance.new("UIStroke")
+    UIStroke.Color = Color3.fromRGB(170, 0, 255)
+    UIStroke.Thickness = 2
+    UIStroke.Parent = MainFrame
+
+    local InnerContainer = Instance.new("Frame")
+    InnerContainer.Size = UDim2.new(1, -6, 1, -6)
+    InnerContainer.Position = UDim2.new(0, 3, 0, 3)
+    InnerContainer.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    InnerContainer.ClipsDescendants = true
+    InnerContainer.Parent = MainFrame
+    Instance.new("UICorner", InnerContainer).CornerRadius = UDim.new(0, 6)
+
+    local BgImage = Instance.new("ImageLabel")
+    BgImage.Size = UDim2.new(1, 0, 1, 0)
+    BgImage.BackgroundTransparency = 1
+    BgImage.Image = "rbxassetid://93427694236333"
+    BgImage.ScaleType = Enum.ScaleType.Crop
+    BgImage.Parent = InnerContainer
+
+    local Overlay = Instance.new("Frame")
+    Overlay.Size = UDim2.new(1, 0, 1, 0)
+    Overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    Overlay.BackgroundTransparency = 0.35
+    Overlay.BorderSizePixel = 0
+    Overlay.Parent = InnerContainer
+
+    local Header = Instance.new("Frame")
+    Header.Size = UDim2.new(1, 0, 0, 30)
+    Header.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    Header.BackgroundTransparency = 0.4
+    Header.BorderSizePixel = 0
+    Header.Parent = Overlay
+
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(1, -60, 1, 0)
+    Title.Position = UDim2.new(0, 10, 0, 0)
+    Title.BackgroundTransparency = 1
+    Title.Text = "MIYAKO SPEAR"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.TextXAlignment = Enum.TextXAlignment.Left
+    Title.Font = Enum.Font.GothamBold
+    Title.TextSize = 13
+    Title.Parent = Header
+
+    local BtnMin = Instance.new("TextButton")
+    BtnMin.Size = UDim2.fromOffset(30, 30)
+    BtnMin.Position = UDim2.new(1, -60, 0, 0)
+    BtnMin.BackgroundTransparency = 1
+    BtnMin.Text = "-"
+    BtnMin.TextColor3 = Color3.fromRGB(255, 255, 255)
+    BtnMin.Font = Enum.Font.GothamBold
+    BtnMin.TextSize = 20
+    BtnMin.Parent = Header
+
+    local BtnClose = Instance.new("TextButton")
+    BtnClose.Size = UDim2.fromOffset(30, 30)
+    BtnClose.Position = UDim2.new(1, -30, 0, 0)
+    BtnClose.BackgroundTransparency = 1
+    BtnClose.Text = "X"
+    BtnClose.TextColor3 = Color3.fromRGB(255, 50, 50)
+    BtnClose.Font = Enum.Font.GothamBold
+    BtnClose.TextSize = 16
+    BtnClose.Parent = Header
+
+    local dragging, dragInput, dragStart, startPos
+    local targetPosition = MainFrame.Position
+
+    Header.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = MainFrame.Position
+            targetPosition = startPos
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    Header.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    local dragConn = UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            local camera = workspace.CurrentCamera
+            local viewportSize = camera.ViewportSize
+            
+            local newX = startPos.X.Offset + delta.X
+            local newY = startPos.Y.Offset + delta.Y
+            
+            local frameWidth = MainFrame.AbsoluteSize.X
+            local frameHeight = MainFrame.AbsoluteSize.Y
+            
+            newX = math.clamp(newX, 0, viewportSize.X - frameWidth)
+            newY = math.clamp(newY, 0, viewportSize.Y - frameHeight)
+            
+            targetPosition = UDim2.new(0, newX, 0, newY)
+        end
+    end)
+
+    local smoothMoveConn = RunService.RenderStepped:Connect(function(dt)
+        if MainFrame and MainFrame.Parent then
+            local currentPos = MainFrame.Position
+            local alpha = math.clamp(dt * 20, 0, 1)
+            local smoothX = currentPos.X.Offset + (targetPosition.X.Offset - currentPos.X.Offset) * alpha
+            local smoothY = currentPos.Y.Offset + (targetPosition.Y.Offset - currentPos.Y.Offset) * alpha
+            MainFrame.Position = UDim2.new(0, smoothX, 0, smoothY)
+        end
+    end)
+
+    local ContentFrame = Instance.new("Frame")
+    ContentFrame.Size = UDim2.new(1, 0, 1, -30)
+    ContentFrame.Position = UDim2.new(0, 0, 0, 30)
+    ContentFrame.BackgroundTransparency = 1
+    ContentFrame.Parent = Overlay
+
+    -- Toggle Silent Aim
+    local BtnAim = Instance.new("TextButton")
+    BtnAim.Size = UDim2.new(1, -20, 0, 32)
+    BtnAim.Position = UDim2.new(0, 10, 0, 8)
+    BtnAim.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    BtnAim.Text = "SILENT AIM: OFF"
+    BtnAim.TextColor3 = Color3.fromRGB(255, 255, 255)
+    BtnAim.Font = Enum.Font.GothamBold
+    BtnAim.TextSize = 11
+    BtnAim.Parent = ContentFrame
+    Instance.new("UICorner", BtnAim).CornerRadius = UDim.new(0, 4)
+
+    -- Split Buttons untuk Predict V1 dan V2
+    local BtnPredictV1 = Instance.new("TextButton")
+    BtnPredictV1.Size = UDim2.new(0.5, -12, 0, 32)
+    BtnPredictV1.Position = UDim2.new(0, 10, 0, 44)
+    BtnPredictV1.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    BtnPredictV1.Text = "PRED V1: OFF"
+    BtnPredictV1.TextColor3 = Color3.fromRGB(255, 255, 255)
+    BtnPredictV1.Font = Enum.Font.GothamBold
+    BtnPredictV1.TextSize = 11
+    BtnPredictV1.Parent = ContentFrame
+    Instance.new("UICorner", BtnPredictV1).CornerRadius = UDim.new(0, 4)
+
+    local BtnPredictV2 = Instance.new("TextButton")
+    BtnPredictV2.Size = UDim2.new(0.5, -12, 0, 32)
+    BtnPredictV2.Position = UDim2.new(0.5, 2, 0, 44)
+    BtnPredictV2.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    BtnPredictV2.Text = "PRED V2: OFF"
+    BtnPredictV2.TextColor3 = Color3.fromRGB(255, 255, 255)
+    BtnPredictV2.Font = Enum.Font.GothamBold
+    BtnPredictV2.TextSize = 11
+    BtnPredictV2.Parent = ContentFrame
+    Instance.new("UICorner", BtnPredictV2).CornerRadius = UDim.new(0, 4)
+
+    BtnAim.MouseButton1Click:Connect(function()
+        Config.Enabled = not Config.Enabled
+        if Config.Enabled then
+            BtnAim.Text = "SILENT AIM: ON"
+            BtnAim.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+        else
+            BtnAim.Text = "SILENT AIM: OFF"
+            BtnAim.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        end
+    end)
+
+    local function updatePredictUI()
+        if Config.PredictMode == "V1" then
+            BtnPredictV1.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+            BtnPredictV1.Text = "PRED V1: ON"
+            BtnPredictV2.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            BtnPredictV2.Text = "PRED V2: OFF"
+        elseif Config.PredictMode == "V2" then
+            BtnPredictV1.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            BtnPredictV1.Text = "PRED V1: OFF"
+            BtnPredictV2.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+            BtnPredictV2.Text = "PRED V2: ON"
+        else
+            BtnPredictV1.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            BtnPredictV1.Text = "PRED V1: OFF"
+            BtnPredictV2.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            BtnPredictV2.Text = "PRED V2: OFF"
+        end
+    end
+
+    BtnPredictV1.MouseButton1Click:Connect(function()
+        if Config.PredictMode == "V1" then
+            Config.PredictMode = "OFF"
+        else
+            Config.PredictMode = "V1"
+        end
+        updatePredictUI()
+    end)
+
+    BtnPredictV2.MouseButton1Click:Connect(function()
+        if Config.PredictMode == "V2" then
+            Config.PredictMode = "OFF"
+        else
+            Config.PredictMode = "V2"
+        end
+        updatePredictUI()
+    end)
+
+    local isMinimized = false
+    BtnMin.MouseButton1Click:Connect(function()
+        isMinimized = not isMinimized
+        if isMinimized then
+            BtnMin.Text = "+"
+            TweenService:Create(MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(220, 30)}):Play()
+        else
+            BtnMin.Text = "-"
+            TweenService:Create(MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(220, 118)}):Play()
+        end
+    end)
+
+    BtnClose.MouseButton1Click:Connect(function()
+        Config.Enabled = false
+        Config.PredictMode = "OFF"
+        Config.ShowFOV = false
+        Config.ShowTrajectory = false
+        State.chargingSpear = false
+        State.touchInput = nil
+
+        if renderConn then renderConn:Disconnect() renderConn = nil end
+        if inputBeganConn then inputBeganConn:Disconnect() inputBeganConn = nil end
+        if inputEndedConn then inputEndedConn:Disconnect() inputEndedConn = nil end
+        if dragConn then dragConn:Disconnect() dragConn = nil end
+        if smoothMoveConn then smoothMoveConn:Disconnect() smoothMoveConn = nil end
+
+        if FOVCircle then
+            pcall(function()
+                FOVCircle.Visible = false
+                FOVCircle:Remove()
+            end)
+            FOVCircle = nil
+        end
+
+        if PathFolder then
+            PathFolder:Destroy()
+            PathFolder = nil
+        end
+
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then
+                local hl = p.Character:FindFirstChild("MIYAKO_Highlight")
+                if hl then hl:Destroy() end
+            end
+        end
+
+        gui:Destroy()
+    end)
+end)
+
+print("[MIYAKO] Silent Spear Loaded - Split Buttons Predict Mode Active!")
