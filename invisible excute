@@ -1,0 +1,14 @@
+local function getInvisAPI()
+    if InvisibleAPI then return InvisibleAPI end
+    if _G.MengHub and _G.MengHub.Invisible then
+        InvisibleAPI = _G.MengHub.Invisible
+        return InvisibleAPI
+    end
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Tatsumakimaki/Hisoka-Morou/refs/heads/master/invisible"))()
+    end)
+    if _G.MengHub and _G.MengHub.Invisible then
+        InvisibleAPI = _G.MengHub.Invisible
+    end
+    return InvisibleAPI
+end
