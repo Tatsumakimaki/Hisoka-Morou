@@ -1,37 +1,68 @@
 -- ==========================================================
--- GROUPBOX: BYPASS KILER
+-- FILE GITHUB: BYPASS KILER (STANDALONE LOADSTRING)
 -- ==========================================================
-local BypassKillerSection = Tabs.Killer:AddSection("Bypass Kiler")
+local Tabs = getgenv().Tabs
+local Library = getgenv().Library
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+if not Tabs or not Tabs.Streamer then
+    warn("Tab Streamer tidak ditemukan untuk Bypass Kiler!")
+    return
+end
+
+-- Membuat Groupbox khusus di Tab Streamer
+local BypassKillerBox = Tabs.Streamer:AddLeftGroupbox("Bypass Kiler", "shield-alert")
 
 -- 1. Auto Stalk (Myers)
-local AutoStalk = { Enabled = false, StalkRange = 150, Target = nil }
-local function startAutoStalk()
-    if Connections.Stalk then return end
-    Connections.Stalk = RunService.Heartbeat:Connect(function()
-        if not AutoStalk.Enabled then return end
-        local target = getClosestSurvivorForStalk()
-        if not target or not target.Character then return end
-        local stalkEvent = ReplicatedStorage:FindFirstChild("Remotes", true)
-            and ReplicatedStorage.Remotes:FindFirstChild("Killers", true)
-            and ReplicatedStorage.Remotes.Killers:FindFirstChild("Stalker", true)
-            and ReplicatedStorage.Remotes.Killers.Stalker:FindFirstChild("StartStalking")
-        if stalkEvent then
-            pcall(function() stalkEvent:FireServer(target) end)
+local AutoStalk = { Enabled = false, StalkRange = 150 }
+local function getClosestSurvivorForStalk()
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local closest, shortest = nil, math.huge
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then 
+            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if hum and hrp and hum.Health > 30 then
+                local dist = (hrp.Position - root.Position).Magnitude
+                if dist <= AutoStalk.StalkRange and dist < shortest then
+                    shortest = dist
+                    closest = plr
+                end
+            end
         end
-    end)
-end
-local function stopAutoStalk()
-    if Connections.Stalk then
-        Connections.Stalk:Disconnect()
-        Connections.Stalk = nil
     end
+    return closest
 end
-BypassKillerSection:AddToggle({
-    Title = "Auto Stalk (Myers)",
+
+BypassKillerBox:AddToggle("AutoStalk", {
+    Text = "Auto Stalk (Myers)",
     Default = false,
     Callback = function(v)
         AutoStalk.Enabled = v
-        if v then startAutoStalk() else stopAutoStalk() end
+        if v then
+            getgenv().StalkConn = RunService.Heartbeat:Connect(function()
+                if not AutoStalk.Enabled then return end
+                local target = getClosestSurvivorForStalk()
+                if not target or not target.Character then return end
+                local stalkEvent = ReplicatedStorage:FindFirstChild("Remotes", true)
+                    and ReplicatedStorage.Remotes:FindFirstChild("Killers", true)
+                    and ReplicatedStorage.Remotes.Killers:FindFirstChild("Stalker", true)
+                    and ReplicatedStorage.Remotes.Killers.Stalker:FindFirstChild("StartStalking")
+                if stalkEvent then
+                    pcall(function() stalkEvent:FireServer(target) end)
+                end
+            end)
+        else
+            if getgenv().StalkConn then
+                getgenv().StalkConn:Disconnect()
+                getgenv().StalkConn = nil
+            end
+        end
     end
 })
 
@@ -42,7 +73,7 @@ setreadonly(mt, false)
 mt.__namecall = newcclosure(function(self, ...)
     local method = getnamecallmethod()
     local args = {...}
-    if Config.Killer_BypassCarry and method == "GetAttribute" and not checkcaller() then
+    if getgenv().BypassCarryEnabled and method == "GetAttribute" and not checkcaller() then
         if args[1] == "IsCarrying" then
             return false
         end
@@ -51,29 +82,32 @@ mt.__namecall = newcclosure(function(self, ...)
 end)
 setreadonly(mt, true)
 
-BypassKillerSection:AddToggle({
-    Title = "Unlock Skills While Carrying",
+BypassKillerBox:AddToggle("UnlockCarry", {
+    Text = "Unlock Skills While Carrying",
     Default = false,
     Callback = function(v)
-        Config.Killer_BypassCarry = v
-        if v then
-            Library:Notify({Title = "Bypass Carry", Description = "Diaktifkan", Duration = 3})
-        else
-            Library:Notify({Title = "Bypass Carry", Description = "Dinonaktifkan", Duration = 3})
-        end
+        getgenv().BypassCarryEnabled = v
     end
 })
 
 -- 3. Counter Auto Parry
-AntiAutoParryEnabled = false
+local VALID_PARRY_IDS = {
+    ["122812055447896"] = true, ["133963973694098"] = true, ["117042998468241"] = true,
+    ["135002183282873"] = true, ["121216847022485"] = true, ["132817836308238"] = true,
+    ["129784271201071"] = true, ["82666958311998"]  = true, ["78432063483146"]  = true,
+    ["118907603246885"] = true, ["139369275981139"] = true, ["110355011987939"] = true,
+    ["111920872708571"] = true, ["105374834496520"] = true, ["138720291317243"] = true,
+    ["106871536134254"] = true, ["130593238885843"] = true, ["115244153053858"] = true,
+    ["74968262036854"]  = true, ["113255068724446"] = true, ["98163597193511"]  = true,
+    ["80411309607666"]  = true
+}
 local ParryAnimList = {}
-for id, _ in pairs(VALID_PARRY_IDS) do
-    table.insert(ParryAnimList, id)
-end
+for id, _ in pairs(VALID_PARRY_IDS) do table.insert(ParryAnimList, id) end
+
 task.spawn(function()
     while true do
         task.wait(0.5)
-        if not AntiAutoParryEnabled then continue end
+        if not getgenv().AntiAutoParryEnabled then continue end
         local char = LocalPlayer.Character
         if not char then continue end
         local myRoot = char:FindFirstChild("HumanoidRootPart")
@@ -83,8 +117,7 @@ task.spawn(function()
             if p ~= LocalPlayer and p.Team and p.Team.Name == "Survivors" then
                 local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
                 if r and (myRoot.Position - r.Position).Magnitude <= 15 then
-                    near = true
-                    break
+                    near = true; break
                 end
             end
         end
@@ -96,136 +129,196 @@ task.spawn(function()
             local animator = hum and hum:FindFirstChildOfClass("Animator")
             if animator then
                 local track = animator:LoadAnimation(anim)
-                track:Play()
-                track:AdjustWeight(0)
-                task.wait(0.05)
-                track:Stop()
-                anim:Destroy()
+                track:Play(); track:AdjustWeight(0)
+                task.wait(0.05); track:Stop(); anim:Destroy()
             end
         end
     end
 end)
-BypassKillerSection:AddToggle({
-    Title = "Counter Auto Parry",
+
+BypassKillerBox:AddToggle("CounterAutoParry", {
+    Text = "Counter Auto Parry",
     Default = false,
-    Keybind = true,
     Callback = function(v)
-        AntiAutoParryEnabled = v
+        getgenv().AntiAutoParryEnabled = v
     end
 })
 
 -- 4. Infinite Lunge
-InfiniteLungeEnabled = false
-local function EnableInfiniteLunge()
-    InfiniteLungeEnabled = true
-    local char = LocalPlayer.Character
-    if char then char:SetAttribute("lungeboost", 999) end
-end
-local function DisableInfiniteLunge()
-    InfiniteLungeEnabled = false
-    local char = LocalPlayer.Character
-    if char then char:SetAttribute("lungeboost", 1) end
-end
-LocalPlayer.CharacterAdded:Connect(function(newChar)
-    task.wait(0.8)
-    if InfiniteLungeEnabled and newChar then
-        newChar:SetAttribute("lungeboost", 999)
+BypassKillerBox:AddToggle("InfiniteLunge", {
+    Text = "Infinite Lunge",
+    Default = false,
+    Callback = function(v)
+        getgenv().InfiniteLungeEnabled = v
+        local char = LocalPlayer.Character
+        if char then char:SetAttribute("lungeboost", v and 999 or 1) end
     end
+})
+
+-- 5. Infinite Frenzy (Jeff)
+BypassKillerBox:AddToggle("InfFrenzy", {
+    Text = "Infinite Frenzy (Jeff)",
+    Default = false,
+    Callback = function(v)
+        getgenv().InfFrenzyEnabled = v
+        if v then
+            task.spawn(function()
+                while getgenv().InfFrenzyEnabled do
+                    pcall(function()
+                        local char = LocalPlayer.Character
+                        if char and char:GetAttribute("Frenzy") ~= true then
+                            char:SetAttribute("Frenzy", true)
+                        end
+                    end)
+                    task.wait(0.1)
+                end
+            end)
+        else
+            pcall(function()
+                local char = LocalPlayer.Character
+                if char then char:SetAttribute("Frenzy", false) end
+            end)
+        end
+    end
+})
+
+-- 6. Infinite Pursuit (Jason)
+BypassKillerBox:AddToggle("InfPursuit", {
+    Text = "Infinite Pursuit (Jason)",
+    Default = false,
+    Callback = function(v)
+        getgenv().InfPursuitEnabled = v
+        if v then
+            task.spawn(function()
+                while getgenv().InfPursuitEnabled do
+                    pcall(function()
+                        local char = LocalPlayer.Character
+                        if char and char:GetAttribute("Pursuit") ~= true then
+                            char:SetAttribute("Pursuit", true)
+                        end
+                    end)
+                    task.wait(0.1)
+                end
+            end)
+        else
+            pcall(function()
+                local char = LocalPlayer.Character
+                if char then char:SetAttribute("Pursuit", false) end
+            end)
+        end
+    end
+})
+
+-- 7. Infinite Hidden (Leap)
+BypassKillerBox:AddToggle("InfHidden", {
+    Text = "Infinite Hidden (Leap)",
+    Default = false,
+    Callback = function(v)
+        getgenv().BypassLeapEnabled = v
+        if v then
+            task.spawn(function()
+                local leapFunction, m2Function
+                for _, fn in pairs(getgc(true)) do
+                    if type(fn) == "function" and islclosure(fn) then
+                        local info = debug.getinfo(fn)
+                        if info.name == "tryActivate" then leapFunction = fn end
+                        if info.name == "playM2Animation" then m2Function = fn end
+                    end
+                end
+                while task.wait(0.1) and getgenv().BypassLeapEnabled do
+                    for _, fn in pairs({leapFunction, m2Function}) do
+                        if fn then
+                            for i, val in pairs(debug.getupvalues(fn)) do
+                                if type(val) == "boolean" and val == true then
+                                    debug.setupvalue(fn, i, false)
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+})
+
+-- 8. Aim Lock Hidden
+local Aiming = false
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then Aiming = true end
 end)
-BypassKillerSection:AddToggle({
-    Title = "Infinite Lunge",
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then Aiming = false end
+end)
+
+BypassKillerBox:AddToggle("AimLockHidden", {
+    Text = "Aim Lock Hidden",
     Default = false,
-    Keybind = true,
-    Callback = function(v)
-        if v then EnableInfiniteLunge() else DisableInfiniteLunge() end
-    end
-})
-
--- 5. Infinite Frenzy (Jeff) & 6. Infinite Pursuit (Jason)
-local VD = getgenv().VD or {}
-getgenv().VD = VD
-VD.KILLER_InfFrenzy = false
-VD.KILLER_InfPursuit = false
-
-function NEX_StartJeffCooldownBypass()
-    if getgenv().NEX_JeffCooldownBypassThread then return end
-    getgenv().NEX_JeffCooldownBypassThread = task.spawn(function()
-        while VD.KILLER_InfFrenzy do
-            pcall(function()
-                local char = LocalPlayer.Character
-                if char and char:GetAttribute("Frenzy") ~= true then
-                    char:SetAttribute("Frenzy", true)
+    Callback = function(state)
+        getgenv().AimLockHiddenEnabled = state
+        if state then
+            task.spawn(function()
+                while getgenv().AimLockHiddenEnabled do
+                    if Aiming then
+                        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            local closest, shortest = nil, math.huge
+                            for _, p in pairs(Players:GetPlayers()) do
+                                if p ~= LocalPlayer and p.Character then
+                                    local tHrp = p.Character:FindFirstChild("HumanoidRootPart")
+                                    if tHrp and p.Team and p.Team.Name == "Survivors" then
+                                        local d = (tHrp.Position - hrp.Position).Magnitude
+                                        if d < shortest then shortest = d; closest = tHrp end
+                                    end
+                                end
+                            end
+                            if closest then
+                                pcall(function()
+                                    workspace.CurrentCamera.CFrame = CFrame.new(workspace.CurrentCamera.CFrame.Position, closest.Position + Vector3.new(0, 2.5, 0))
+                                end)
+                            end
+                        end
+                    end
+                    task.wait()
                 end
             end)
-            task.wait(0.1)
+        else
+            Aiming = false
         end
-        getgenv().NEX_JeffCooldownBypassThread = nil
-    end)
-end
-function NEX_StopJeffCooldownBypass()
-    pcall(function()
-        local char = LocalPlayer.Character
-        if char and char:GetAttribute("Frenzy") == true then
-            char:SetAttribute("Frenzy", false)
-            local killer = ReplicatedStorage:FindFirstChild("Remotes")
-                and ReplicatedStorage.Remotes:FindFirstChild("Killers")
-                and ReplicatedStorage.Remotes.Killers:FindFirstChild("Killer")
-            if killer then
-                local deact = killer:FindFirstChild("Deactivatefromclient")
-                if deact then deact:FireServer() end
-            end
-        end
-    end)
-end
+    end
+})
 
-local InfPursuitThread = nil
-function NEX_StartJasonPursuitBypass()
-    if InfPursuitThread then return end
-    InfPursuitThread = task.spawn(function()
-        while VD.KILLER_InfPursuit do
-            pcall(function()
-                local char = LocalPlayer.Character
-                if char and char:GetAttribute("Pursuit") ~= true then
-                    char:SetAttribute("Pursuit", true)
+-- 9. Infinite Abyss
+BypassKillerBox:AddToggle("InfAbyss", {
+    Text = "Infinite Abyss",
+    Default = false,
+    Callback = function(state)
+        getgenv().InfAbyssEnabled = state
+        if state then
+            task.spawn(function()
+                local CorruptHandlerFunc = nil
+                for _, fn in pairs(getgc(true)) do
+                    if type(fn) == "function" and islclosure(fn) then
+                        local constants = debug.getconstants(fn)
+                        if table.find(constants, "corrupt") and table.find(constants, "Immobile") then
+                            CorruptHandlerFunc = fn
+                            break
+                        end
+                    end
+                end
+                while getgenv().InfAbyssEnabled do
+                    if CorruptHandlerFunc then
+                        for idx, val in pairs(debug.getupvalues(CorruptHandlerFunc)) do
+                            if type(val) == "boolean" and val == false then
+                                debug.setupvalue(CorruptHandlerFunc, idx, true)
+                            end
+                        end
+                    end
+                    task.wait(0.1)
                 end
             end)
-            task.wait(0.1)
         end
-        InfPursuitThread = nil
-    end)
-end
-function NEX_StopJasonPursuitBypass()
-    pcall(function()
-        local char = LocalPlayer.Character
-        if char and char:GetAttribute("Pursuit") == true then
-            char:SetAttribute("Pursuit", false)
-            local jason = ReplicatedStorage:FindFirstChild("Remotes")
-                and ReplicatedStorage.Remotes:FindFirstChild("Killers")
-                and ReplicatedStorage.Remotes.Killers:FindFirstChild("Jason")
-            if jason then
-                local deact = jason:FindFirstChild("Deactivatefromclient")
-                if deact then deact:FireServer() end
-            end
-        end
-    end)
-end
-
-BypassKillerSection:AddToggle({
-    Title = "Infinite Frenzy (Jeff)",
-    Default = false,
-    Keybind = true,
-    Callback = function(v)
-        VD.KILLER_InfFrenzy = v
-        if v then NEX_StartJeffCooldownBypass() else NEX_StopJeffCooldownBypass() end
     end
 })
 
-BypassKillerSection:AddToggle({
-    Title = "Infinite Pursuit (Jason)",
-    Default = false,
-    Keybind = true,
-    Callback = function(v)
-        VD.KILLER_InfPursuit = v
-        if v then NEX_StartJasonPursuitBypass() else NEX_StopJasonPursuitBypass() end
-    end
-})
+print("Miyako: Add-on Bypass Kiler berhasil dimuat via loadstring!")
