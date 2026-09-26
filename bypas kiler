@@ -1,0 +1,231 @@
+-- ==========================================================
+-- GROUPBOX: BYPASS KILER
+-- ==========================================================
+local BypassKillerSection = Tabs.Killer:AddSection("Bypass Kiler")
+
+-- 1. Auto Stalk (Myers)
+local AutoStalk = { Enabled = false, StalkRange = 150, Target = nil }
+local function startAutoStalk()
+    if Connections.Stalk then return end
+    Connections.Stalk = RunService.Heartbeat:Connect(function()
+        if not AutoStalk.Enabled then return end
+        local target = getClosestSurvivorForStalk()
+        if not target or not target.Character then return end
+        local stalkEvent = ReplicatedStorage:FindFirstChild("Remotes", true)
+            and ReplicatedStorage.Remotes:FindFirstChild("Killers", true)
+            and ReplicatedStorage.Remotes.Killers:FindFirstChild("Stalker", true)
+            and ReplicatedStorage.Remotes.Killers.Stalker:FindFirstChild("StartStalking")
+        if stalkEvent then
+            pcall(function() stalkEvent:FireServer(target) end)
+        end
+    end)
+end
+local function stopAutoStalk()
+    if Connections.Stalk then
+        Connections.Stalk:Disconnect()
+        Connections.Stalk = nil
+    end
+end
+BypassKillerSection:AddToggle({
+    Title = "Auto Stalk (Myers)",
+    Default = false,
+    Callback = function(v)
+        AutoStalk.Enabled = v
+        if v then startAutoStalk() else stopAutoStalk() end
+    end
+})
+
+-- 2. Unlock Skills While Carrying
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+setreadonly(mt, false)
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    if Config.Killer_BypassCarry and method == "GetAttribute" and not checkcaller() then
+        if args[1] == "IsCarrying" then
+            return false
+        end
+    end
+    return oldNamecall(self, ...)
+end)
+setreadonly(mt, true)
+
+BypassKillerSection:AddToggle({
+    Title = "Unlock Skills While Carrying",
+    Default = false,
+    Callback = function(v)
+        Config.Killer_BypassCarry = v
+        if v then
+            Library:Notify({Title = "Bypass Carry", Description = "Diaktifkan", Duration = 3})
+        else
+            Library:Notify({Title = "Bypass Carry", Description = "Dinonaktifkan", Duration = 3})
+        end
+    end
+})
+
+-- 3. Counter Auto Parry
+AntiAutoParryEnabled = false
+local ParryAnimList = {}
+for id, _ in pairs(VALID_PARRY_IDS) do
+    table.insert(ParryAnimList, id)
+end
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if not AntiAutoParryEnabled then continue end
+        local char = LocalPlayer.Character
+        if not char then continue end
+        local myRoot = char:FindFirstChild("HumanoidRootPart")
+        if not myRoot then continue end
+        local near = false
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Team and p.Team.Name == "Survivors" then
+                local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+                if r and (myRoot.Position - r.Position).Magnitude <= 15 then
+                    near = true
+                    break
+                end
+            end
+        end
+        if near then
+            local randomId = ParryAnimList[math.random(1, #ParryAnimList)]
+            local anim = Instance.new("Animation")
+            anim.AnimationId = "rbxassetid://" .. randomId
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local animator = hum and hum:FindFirstChildOfClass("Animator")
+            if animator then
+                local track = animator:LoadAnimation(anim)
+                track:Play()
+                track:AdjustWeight(0)
+                task.wait(0.05)
+                track:Stop()
+                anim:Destroy()
+            end
+        end
+    end
+end)
+BypassKillerSection:AddToggle({
+    Title = "Counter Auto Parry",
+    Default = false,
+    Keybind = true,
+    Callback = function(v)
+        AntiAutoParryEnabled = v
+    end
+})
+
+-- 4. Infinite Lunge
+InfiniteLungeEnabled = false
+local function EnableInfiniteLunge()
+    InfiniteLungeEnabled = true
+    local char = LocalPlayer.Character
+    if char then char:SetAttribute("lungeboost", 999) end
+end
+local function DisableInfiniteLunge()
+    InfiniteLungeEnabled = false
+    local char = LocalPlayer.Character
+    if char then char:SetAttribute("lungeboost", 1) end
+end
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    task.wait(0.8)
+    if InfiniteLungeEnabled and newChar then
+        newChar:SetAttribute("lungeboost", 999)
+    end
+end)
+BypassKillerSection:AddToggle({
+    Title = "Infinite Lunge",
+    Default = false,
+    Keybind = true,
+    Callback = function(v)
+        if v then EnableInfiniteLunge() else DisableInfiniteLunge() end
+    end
+})
+
+-- 5. Infinite Frenzy (Jeff) & 6. Infinite Pursuit (Jason)
+local VD = getgenv().VD or {}
+getgenv().VD = VD
+VD.KILLER_InfFrenzy = false
+VD.KILLER_InfPursuit = false
+
+function NEX_StartJeffCooldownBypass()
+    if getgenv().NEX_JeffCooldownBypassThread then return end
+    getgenv().NEX_JeffCooldownBypassThread = task.spawn(function()
+        while VD.KILLER_InfFrenzy do
+            pcall(function()
+                local char = LocalPlayer.Character
+                if char and char:GetAttribute("Frenzy") ~= true then
+                    char:SetAttribute("Frenzy", true)
+                end
+            end)
+            task.wait(0.1)
+        end
+        getgenv().NEX_JeffCooldownBypassThread = nil
+    end)
+end
+function NEX_StopJeffCooldownBypass()
+    pcall(function()
+        local char = LocalPlayer.Character
+        if char and char:GetAttribute("Frenzy") == true then
+            char:SetAttribute("Frenzy", false)
+            local killer = ReplicatedStorage:FindFirstChild("Remotes")
+                and ReplicatedStorage.Remotes:FindFirstChild("Killers")
+                and ReplicatedStorage.Remotes.Killers:FindFirstChild("Killer")
+            if killer then
+                local deact = killer:FindFirstChild("Deactivatefromclient")
+                if deact then deact:FireServer() end
+            end
+        end
+    end)
+end
+
+local InfPursuitThread = nil
+function NEX_StartJasonPursuitBypass()
+    if InfPursuitThread then return end
+    InfPursuitThread = task.spawn(function()
+        while VD.KILLER_InfPursuit do
+            pcall(function()
+                local char = LocalPlayer.Character
+                if char and char:GetAttribute("Pursuit") ~= true then
+                    char:SetAttribute("Pursuit", true)
+                end
+            end)
+            task.wait(0.1)
+        end
+        InfPursuitThread = nil
+    end)
+end
+function NEX_StopJasonPursuitBypass()
+    pcall(function()
+        local char = LocalPlayer.Character
+        if char and char:GetAttribute("Pursuit") == true then
+            char:SetAttribute("Pursuit", false)
+            local jason = ReplicatedStorage:FindFirstChild("Remotes")
+                and ReplicatedStorage.Remotes:FindFirstChild("Killers")
+                and ReplicatedStorage.Remotes.Killers:FindFirstChild("Jason")
+            if jason then
+                local deact = jason:FindFirstChild("Deactivatefromclient")
+                if deact then deact:FireServer() end
+            end
+        end
+    end)
+end
+
+BypassKillerSection:AddToggle({
+    Title = "Infinite Frenzy (Jeff)",
+    Default = false,
+    Keybind = true,
+    Callback = function(v)
+        VD.KILLER_InfFrenzy = v
+        if v then NEX_StartJeffCooldownBypass() else NEX_StopJeffCooldownBypass() end
+    end
+})
+
+BypassKillerSection:AddToggle({
+    Title = "Infinite Pursuit (Jason)",
+    Default = false,
+    Keybind = true,
+    Callback = function(v)
+        VD.KILLER_InfPursuit = v
+        if v then NEX_StartJasonPursuitBypass() else NEX_StopJasonPursuitBypass() end
+    end
+})
