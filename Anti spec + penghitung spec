@@ -1,0 +1,237 @@
+-- ========================================================
+-- MIYAKO - SPECTATOR SYSTEM (COUNTER & ANTI SPEC)
+-- Game: Violence District
+-- ========================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Konfigurasi Global terpisah
+_G.Miyako_StreamerConfig = _G.Miyako_StreamerConfig or {
+    Counter = false,
+    AntiSpec = false
+}
+
+-- Bersihkan instance lama jika script dijalankan ulang
+if _G.Miyako_StreamerConn then
+    _G.Miyako_StreamerConn:Disconnect()
+    _G.Miyako_StreamerConn = nil
+end
+if _G.Miyako_SpecGui then
+    pcall(function() _G.Miyako_SpecGui:Destroy() end)
+    _G.Miyako_SpecGui = nil
+end
+
+local function getGuiContainer()
+    local ok, core = pcall(function() return CoreGui end)
+    if ok and core then return core end
+    return LocalPlayer:WaitForChild("PlayerGui", 5) or LocalPlayer:FindFirstChildOfClass("PlayerGui")
+end
+
+-- ================= HUD SPECTATOR COUNTER =================
+local parentGui = getGuiContainer()
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MiyakoSpectatorCounter"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.DisplayOrder = 999
+ScreenGui.Enabled = false
+ScreenGui.Parent = parentGui
+_G.Miyako_SpecGui = ScreenGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.fromOffset(160, 36)
+MainFrame.Position = UDim2.new(0.5, -80, 0.05, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+MainFrame.BackgroundTransparency = 0.15
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Parent = ScreenGui
+
+local Corner = Instance.new("UICorner")
+Corner.CornerRadius = UDim.new(0, 10)
+Corner.Parent = MainFrame
+
+local Stroke = Instance.new("UIStroke")
+Stroke.Color = Color3.fromRGB(70, 85, 130)
+Stroke.Thickness = 1.2
+Stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+Stroke.Parent = MainFrame
+
+local Icon = Instance.new("TextLabel")
+Icon.Name = "EyeIcon"
+Icon.Size = UDim2.fromOffset(24, 24)
+Icon.Position = UDim2.new(0, 8, 0.5, -12)
+Icon.BackgroundTransparency = 1
+Icon.Text = "👁️"
+Icon.TextSize = 14
+Icon.Parent = MainFrame
+
+local CounterText = Instance.new("TextLabel")
+CounterText.Name = "CounterText"
+CounterText.Size = UDim2.new(1, -40, 1, 0)
+CounterText.Position = UDim2.new(0, 34, 0, 0)
+CounterText.BackgroundTransparency = 1
+CounterText.Font = Enum.Font.GothamBold
+CounterText.Text = "Spectators: 0"
+CounterText.TextColor3 = Color3.fromRGB(220, 225, 255)
+CounterText.TextSize = 12
+CounterText.TextXAlignment = Enum.TextXAlignment.Left
+CounterText.Parent = MainFrame
+
+local ListFrame = Instance.new("Frame")
+ListFrame.Name = "ListFrame"
+ListFrame.Size = UDim2.new(1, 0, 0, 0)
+ListFrame.Position = UDim2.new(0, 0, 1, 4)
+ListFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+ListFrame.BackgroundTransparency = 0.2
+ListFrame.BorderSizePixel = 0
+ListFrame.Visible = false
+ListFrame.AutomaticSize = Enum.AutomaticSize.Y
+ListFrame.Parent = MainFrame
+
+local ListCorner = Instance.new("UICorner")
+ListCorner.CornerRadius = UDim.new(0, 8)
+ListCorner.Parent = ListFrame
+
+local ListLayout = Instance.new("UIListLayout")
+ListLayout.FillDirection = Enum.FillDirection.Vertical
+ListLayout.Padding = UDim.new(0, 2)
+ListLayout.Parent = ListFrame
+
+local ListPad = Instance.new("UIPadding")
+ListPad.PaddingTop = UDim.new(0, 4)
+ListPad.PaddingBottom = UDim.new(0, 4)
+ListPad.PaddingLeft = UDim.new(0, 8)
+ListPad.PaddingRight = UDim.new(0, 8)
+ListPad.Parent = ListFrame
+
+-- Dragging Sistem HUD
+local dragging, dragStart, startPos = false, nil, nil
+MainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+MainFrame.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- Fungsi Cek Siapa yang Menonton
+local function getSpectators()
+    local spectators = {}
+    local myChar = LocalPlayer.Character
+    local myName = LocalPlayer.Name
+    local myDisplay = LocalPlayer.DisplayName
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            local isWatching = false
+            local target = p:GetAttribute("Spectating") or p:GetAttribute("SpectateTarget") or p:GetAttribute("Target")
+            if target and (target == myName or target == myDisplay or (myChar and target == myChar.Name)) then
+                isWatching = true
+            end
+
+            if not isWatching then
+                local specVal = p:FindFirstChild("SpectateTarget") or p:FindFirstChild("Spectating")
+                if specVal and (specVal.Value == LocalPlayer or specVal.Value == myName or (myChar and specVal.Value == myChar)) then
+                    isWatching = true
+                end
+            end
+
+            if not isWatching and p:GetAttribute("isspectating") == true then
+                local camSub = p:GetAttribute("CameraSubject")
+                if camSub and (camSub == myName or (myChar and camSub == myChar.Name)) then
+                    isWatching = true
+                end
+            end
+
+            if isWatching then
+                table.insert(spectators, p.DisplayName or p.Name)
+            end
+        end
+    end
+    return spectators
+end
+
+-- ================= LOGIKA UTAMA (LOOP) =================
+local lastCheck = 0
+_G.Miyako_StreamerConn = RunService.Heartbeat:Connect(function()
+    -- Kontrol Counter Spectator
+    if _G.Miyako_StreamerConfig.Counter then
+        if not ScreenGui.Enabled then ScreenGui.Enabled = true end
+        local now = tick()
+        if now - lastCheck >= 0.5 then
+            lastCheck = now
+            local specs = getSpectators()
+            local count = #specs
+
+            CounterText.Text = "Spectators: " .. tostring(count)
+            if count > 0 then
+                Stroke.Color = Color3.fromRGB(90, 160, 255)
+                CounterText.TextColor3 = Color3.fromRGB(120, 210, 255)
+                ListFrame.Visible = true
+
+                for _, child in ipairs(ListFrame:GetChildren()) do
+                    if child:IsA("TextLabel") then child:Destroy() end
+                end
+
+                for _, name in ipairs(specs) do
+                    local lbl = Instance.new("TextLabel")
+                    lbl.Size = UDim2.new(1, 0, 0, 14)
+                    lbl.BackgroundTransparency = 1
+                    lbl.Font = Enum.Font.GothamMedium
+                    lbl.Text = "• " .. name
+                    lbl.TextColor3 = Color3.fromRGB(200, 215, 255)
+                    lbl.TextSize = 11
+                    lbl.TextXAlignment = Enum.TextXAlignment.Left
+                    lbl.Parent = ListFrame
+                end
+            else
+                Stroke.Color = Color3.fromRGB(70, 85, 130)
+                CounterText.TextColor3 = Color3.fromRGB(220, 225, 255)
+                ListFrame.Visible = false
+            end
+        end
+    else
+        if ScreenGui.Enabled then ScreenGui.Enabled = false end
+    end
+
+    -- Kontrol Anti Spectate (Blokir player lain agar skip kamera kita)
+    local char = LocalPlayer.Character
+    if char then
+        if _G.Miyako_StreamerConfig.AntiSpec then
+            if char:GetAttribute("NoSpectate") ~= true then
+                char:SetAttribute("NoSpectate", true)
+            end
+            if char:GetAttribute("CantSpectate") ~= true then
+                char:SetAttribute("CantSpectate", true)
+            end
+        else
+            if char:GetAttribute("NoSpectate") == true then
+                char:SetAttribute("NoSpectate", nil)
+            end
+            if char:GetAttribute("CantSpectate") == true then
+                char:SetAttribute("CantSpectate", nil)
+            end
+        end
+    end
+end)
