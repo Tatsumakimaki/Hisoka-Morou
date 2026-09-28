@@ -1,0 +1,335 @@
+-- ========================================================
+-- MIYAKO - SILENT AIM TOF (RAW LOADSTRING)
+-- Game: Violence District
+-- ========================================================
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Konfigurasi terhubung langsung ke GUI Miyako
+_G.Miyako_TOFConfig = _G.Miyako_TOFConfig or {
+    Enabled = true,
+    TargetMode = "Killer",
+    Laser = true,
+    WallCheck = true,
+    BlockKnocked = true
+}
+
+local ToFState = {
+    LaserBeam = nil,
+    TouchInput = nil,
+    IsAiming = false,
+    SCPCache = {},
+    SCPCacheTimer = 0
+}
+
+local function TeamIs(plr, role)
+    if not plr or not plr.Team or not plr.Team.Name then return false end
+    local tn = string.lower(plr.Team.Name)
+    if role == "Killer" then return string.find(tn, "killer", 1, true) ~= nil end
+    if role == "Survivor" then return string.find(tn, "survivor", 1, true) ~= nil end
+    return false
+end
+
+local function ToF_IsDowned(c)
+    if not c then return true end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    if not hrp then return true end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    if h and h.Health <= 0 then return true end
+    if c:GetAttribute("Knocked") == true then return true end
+    if c:GetAttribute("IsHooked") == true then return true end
+    if c:GetAttribute("IsCarried") == true then return true end
+    return false
+end
+
+local function ToF_IsBlocked()
+    if _G.Miyako_TOFConfig.BlockKnocked == false then return false end
+    local c = LocalPlayer.Character
+    if not c then return true end
+    return ToF_IsDowned(c)
+end
+
+local function ToF_GetEvent()
+    local r = ReplicatedStorage:FindFirstChild("Remotes")
+    local i = r and r:FindFirstChild("Items")
+    local t = i and i:FindFirstChild("Twist of Fate")
+    local f = t and t:FindFirstChild("Fire")
+    if f and f:IsA("RemoteEvent") then return f end
+    return nil
+end
+
+local function ToF_GetGun()
+    local c = LocalPlayer.Character
+    if not c then return nil end
+    local b = c:FindFirstChild("Twist of Fate", true)
+    if not b then return nil end
+    local ra = b:FindFirstChild("Right Arm")
+    if ra then
+        local g = ra:FindFirstChild("gun")
+        if g then return g end
+        local e = ra:FindFirstChild("EmperorGun")
+        if e then return e end
+    end
+    return b
+end
+
+local function ToF_ClearLaser()
+    if ToFState.LaserBeam then
+        pcall(function() ToFState.LaserBeam:Destroy() end)
+        ToFState.LaserBeam = nil
+    end
+end
+
+local function ToF_IsVisible(op, tp, tc)
+    local d = tp - op
+    local dist = d.Magnitude
+    if dist < 0.1 then return true end
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Exclude
+    local ex = {}
+    local lc = LocalPlayer.Character
+    if lc then table.insert(ex, lc) end
+    if tc and tc ~= lc then table.insert(ex, tc) end
+    if ToFState.LaserBeam then table.insert(ex, ToFState.LaserBeam) end
+    rp.FilterDescendantsInstances = ex
+    return workspace:Raycast(op, d.Unit * dist, rp) == nil
+end
+
+local function ToF_GetSCPs()
+    if tick() - ToFState.SCPCacheTimer < 0.5 then return ToFState.SCPCache end
+    local nt = {}
+    local mf = workspace:FindFirstChild("Map")
+    if mf then
+        for _, c in pairs(mf:GetDescendants()) do
+            if c:IsA("Model") then
+                local a = c:GetAttributes()
+                if c:GetAttribute("CorpseCreated0492") or next(a) ~= nil then
+                    local r = c:FindFirstChild("HumanoidRootPart")
+                    if r then table.insert(nt, r) end
+                end
+            end
+        end
+    end
+    ToFState.SCPCache = nt
+    ToFState.SCPCacheTimer = tick()
+    return nt
+end
+
+local function ToF_GetTarget()
+    local g = ToF_GetGun()
+    local c = LocalPlayer.Character
+    if not (g and c) then return nil, nil, nil, nil end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil, nil, nil, nil end
+    local mp = hrp.Position
+    local op
+    if c:GetAttribute("IsCarried") then
+        op = hrp.Position + (hrp.CFrame.LookVector * 2)
+    else
+        pcall(function()
+            op = g:IsA("BasePart") and g.Position or (g:FindFirstChildOfClass("BasePart") and g:FindFirstChildOfClass("BasePart").Position)
+        end)
+        op = op or Vector3.new(mp.X, mp.Y + 1.5, mp.Z)
+    end
+
+    local function predict(t, tc)
+        local tp = t.Position
+        if _G.Miyako_TOFConfig.WallCheck and not ToF_IsVisible(op, tp, tc) then
+            return nil, nil, nil, nil
+        end
+        local tv = Vector3.zero
+        local rp = tc and (tc:FindFirstChild("HumanoidRootPart") or t)
+        if rp then tv = rp.Velocity end
+        local dr = tp - op
+        local d = dr.Magnitude
+        if d < 0.1 then return nil, nil, nil, nil end
+        if d < 5 then return dr.Unit, g, op, tp end
+        local tt = d / 400
+        local pp = tp + (tv * tt)
+        for _ = 1, 2 do
+            local nd = (pp - op).Magnitude
+            tt = nd / 400
+            pp = tp + (tv * tt)
+        end
+        local fd = pp - op
+        if fd.Magnitude < 0.1 then return nil, nil, nil, nil end
+        return fd.Unit, g, op, pp
+    end
+
+    local mode = _G.Miyako_TOFConfig.TargetMode or "Killer"
+    if mode == "Killer" then
+        local bt, bc, bs = nil, nil, math.huge
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and TeamIs(p, "Killer") and p.Character then
+                local t = p.Character:FindFirstChild("Torso") or p.Character:FindFirstChild("UpperTorso") or p.Character:FindFirstChild("HumanoidRootPart")
+                if t then
+                    local d = (mp - t.Position).Magnitude
+                    if d < bs then bs = d; bt = t; bc = p.Character end
+                end
+            end
+        end
+        if not bt then return nil, nil, nil, nil end
+        return predict(bt, bc)
+    elseif mode == "Survivors" then
+        local bt, bc, bd = nil, nil, -math.huge
+        local cam = workspace.CurrentCamera
+        local cl = cam.CFrame.LookVector
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and TeamIs(p, "Survivor") and p.Character then
+                local t = p.Character:FindFirstChild("Torso") or p.Character:FindFirstChild("UpperTorso") or p.Character:FindFirstChild("HumanoidRootPart")
+                if t then
+                    local dt = t.Position - cam.CFrame.Position
+                    if dt.Magnitude > 0.1 then
+                        local dot = cl:Dot(dt.Unit)
+                        if dot > 0.5 and dot > bd then bd = dot; bt = t; bc = p.Character end
+                    end
+                end
+            end
+        end
+        if not bt then return nil, nil, nil, nil end
+        return predict(bt, bc)
+    elseif mode == "Zombie" then
+        local bp, bd = nil, -math.huge
+        local cam = workspace.CurrentCamera
+        local cl = cam.CFrame.LookVector
+        for _, r in ipairs(ToF_GetSCPs()) do
+            if r and r.Parent then
+                local dt = r.Position - cam.CFrame.Position
+                if dt.Magnitude > 0.1 then
+                    local dot = cl:Dot(dt.Unit)
+                    if dot > 0.5 and dot > bd then bd = dot; bp = r end
+                end
+            end
+        end
+        if not bp then return nil, nil, nil, nil end
+        return predict(bp, bp.Parent)
+    end
+    return nil, nil, nil, nil
+end
+
+local function ToF_UpdateLaser(op, tp)
+    if not ToFState.LaserBeam then
+        local l = Instance.new("Part")
+        l.Name = "ToFLaser"
+        l.Anchored = true
+        l.CanCollide = false
+        l.CanTouch = false
+        l.CastShadow = false
+        l.Material = Enum.Material.Neon
+        l.Color = Color3.fromRGB(255, 255, 255)
+        l.Parent = workspace
+        ToFState.LaserBeam = l
+    end
+    local d = (tp - op).Magnitude
+    ToFState.LaserBeam.Size = Vector3.new(0.05, 0.05, d)
+    ToFState.LaserBeam.CFrame = CFrame.new((op + tp) / 2, tp)
+    ToFState.LaserBeam.Transparency = 0
+end
+
+local function ToF_GetMobileBtn()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local sm = pg and pg:FindFirstChild("Survivor-mob")
+    local ct = sm and sm:FindFirstChild("Controls")
+    local gm = ct and ct:FindFirstChild("Gui-mob")
+    if not gm then return nil end
+    for _, n in ipairs({"attack", "Attack", "shoot", "Shoot", "fire", "Fire"}) do
+        local b = gm:FindFirstChild(n, true)
+        if b and b:IsA("GuiObject") then return b end
+    end
+    for _, o in ipairs(gm:GetDescendants()) do
+        if o:IsA("GuiButton") and o.Visible then return o end
+    end
+    return gm:IsA("GuiObject") and gm or nil
+end
+
+local function ToF_IsTouchShoot(input)
+    local sb = ToF_GetMobileBtn()
+    if not (sb and sb.Visible) then return false end
+    local p = input.Position
+    local ap = sb.AbsolutePosition
+    local az = sb.AbsoluteSize
+    return p.X >= ap.X and p.X <= ap.X + az.X and p.Y >= ap.Y and p.Y <= ap.Y + az.Y
+end
+
+local function ToF_Shoot()
+    if not _G.Miyako_TOFConfig.Enabled then return end
+    if ToF_IsBlocked() then return end
+    local td, g, op, tp = ToF_GetTarget()
+    if not (td and g and tp and op) then return end
+    local e = ToF_GetEvent()
+    if not e then return end
+    local fd = tp - op
+    if fd.Magnitude < 0.1 then return end
+    pcall(function() e:FireServer(g, fd.Unit) end)
+end
+
+-- Membersihkan koneksi lama jika file di-load ulang
+if _G.Miyako_TOFConn then _G.Miyako_TOFConn:Disconnect() end
+if _G.Miyako_TOFInputBegan then _G.Miyako_TOFInputBegan:Disconnect() end
+if _G.Miyako_TOFInputEnded then _G.Miyako_TOFInputEnded:Disconnect() end
+
+_G.Miyako_TOFConn = RunService.Heartbeat:Connect(function()
+    if not _G.Miyako_TOFConfig.Enabled then
+        ToF_ClearLaser()
+        ToFState.IsAiming = false
+        return
+    end
+
+    if ToF_IsBlocked() then
+        ToFState.IsAiming = false
+        if ToFState.TouchInput then ToFState.TouchInput = nil end
+        if ToFState.LaserBeam then ToFState.LaserBeam.Transparency = 1 end
+        return
+    end
+
+    if not ToFState.IsAiming then
+        if ToFState.LaserBeam then ToFState.LaserBeam.Transparency = 1 end
+        return
+    end
+
+    local _, _, op, tp = ToF_GetTarget()
+    if op and tp then
+        pcall(function()
+            local c = LocalPlayer.Character
+            local hrp = c and c:FindFirstChild("HumanoidRootPart")
+            if hrp and not c:GetAttribute("IsCarried") then
+                hrp.CFrame = CFrame.new(hrp.Position, Vector3.new(tp.X, hrp.Position.Y, tp.Z))
+            end
+        end)
+        if _G.Miyako_TOFConfig.Laser then
+            ToF_UpdateLaser(op, tp)
+        elseif ToFState.LaserBeam then
+            ToFState.LaserBeam.Transparency = 1
+        end
+    elseif ToFState.LaserBeam then
+        ToFState.LaserBeam.Transparency = 1
+    end
+end)
+
+_G.Miyako_TOFInputBegan = UserInputService.InputBegan:Connect(function(inp, gp)
+    if gp then return end
+    if not _G.Miyako_TOFConfig.Enabled then return end
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 or (inp.UserInputType == Enum.UserInputType.Touch and ToF_IsTouchShoot(inp)) then
+        if ToF_IsBlocked() then ToFState.IsAiming = false; return end
+        ToFState.IsAiming = true
+        if inp.UserInputType == Enum.UserInputType.Touch then ToFState.TouchInput = inp end
+    end
+end)
+
+_G.Miyako_TOFInputEnded = UserInputService.InputEnded:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 or (inp.UserInputType == Enum.UserInputType.Touch and inp == ToFState.TouchInput) then
+        local wa = ToFState.IsAiming
+        ToFState.IsAiming = false
+        if inp == ToFState.TouchInput then ToFState.TouchInput = nil end
+        if ToFState.LaserBeam then ToFState.LaserBeam.Transparency = 1 end
+        if wa then
+            if ToF_IsBlocked() then return end
+            ToF_Shoot()
+        end
+    end
+end)
