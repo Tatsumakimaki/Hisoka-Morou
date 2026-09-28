@@ -1,5 +1,5 @@
 -- ========================================================
--- MIYAKO - BYPASS SELF UNHOOK (STANDALONE LOADSTRING)
+-- MIYAKO - BYPASS SELF UNHOOK (RAW GITHUB)
 -- Game: Violence District
 -- ========================================================
 
@@ -8,26 +8,6 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
-
--- Bersihkan instance lama jika loadstring dipanggil ulang
-if _G.Miyako_SelfUnhook and _G.Miyako_SelfUnhook.Stop then
-    _G.Miyako_SelfUnhook.Stop()
-end
-
-local SelfUnhook = {
-    Enabled = true,
-    Following = false,
-    FollowDuration = 30,
-    FollowDistance = 20,
-    MonitorConn = nil,
-    TriggerCount = 0,
-    _lastTrigger = 0,
-    _cooldown = 3,
-    _hookPos = nil,
-    _hookCFrame = nil,
-    _activeThread = nil,
-    _wasHooked = false
-}
 
 local function TeamIs(plr, role)
     if not plr or not plr.Team or not plr.Team.Name then return false end
@@ -43,9 +23,7 @@ local function GB_GetAllGenerators()
     if mf then
         for _, obj in ipairs(mf:GetDescendants()) do
             if obj:IsA("Model") and obj.Name == "Generator" then
-                local real = obj:GetAttribute("RepairProgress") ~= nil
-                          or obj:GetAttribute("kickcount") ~= nil
-                          or obj:GetAttribute("ProgressRepair") ~= nil
+                local real = obj:GetAttribute("RepairProgress") ~= nil or obj:GetAttribute("kickcount") ~= nil or obj:GetAttribute("ProgressRepair") ~= nil
                 if real then table.insert(gens, obj) end
             end
         end
@@ -57,9 +35,7 @@ local function GB_GetPoints(genModel)
     local pts = {}
     if genModel then
         for _, o in ipairs(genModel:GetChildren()) do
-            if o:IsA("BasePart") and string.find(o.Name, "GeneratorPoint") then
-                table.insert(pts, o)
-            end
+            if o:IsA("BasePart") and string.find(o.Name, "GeneratorPoint") then table.insert(pts, o) end
         end
     end
     return pts
@@ -68,10 +44,7 @@ end
 local function SU_IsHooked()
     local char = LocalPlayer.Character
     if not char then return false end
-    return char:GetAttribute("IsHooked") == true 
-        or char:GetAttribute("isHooked") == true
-        or char:GetAttribute("Hooked") == true 
-        or char:GetAttribute("HookedState") == true
+    return char:GetAttribute("IsHooked") == true or char:GetAttribute("isHooked") == true or char:GetAttribute("Hooked") == true or char:GetAttribute("HookedState") == true
 end
 
 local function SU_GetRandomGeneratorPoint()
@@ -99,73 +72,65 @@ local function SU_GetKillerHRP()
     return nil
 end
 
+-- Setup Global State agar thread bisa dihentikan
+_G.SU_State = _G.SU_State or {
+    Following = false,
+    _activeThread = nil,
+    _lastTrigger = 0,
+    _wasHooked = false
+}
+
 local function SU_Abort()
-    SelfUnhook.Following = false
-    if SelfUnhook._activeThread and coroutine.status(SelfUnhook._activeThread) ~= "dead" then
-        pcall(function() task.cancel(SelfUnhook._activeThread) end)
+    _G.SU_State.Following = false
+    if _G.SU_State._activeThread then
+        pcall(function() task.cancel(_G.SU_State._activeThread) end)
+        _G.SU_State._activeThread = nil
     end
-    SelfUnhook._activeThread = nil
 end
 
 local function SU_Trigger()
-    if SelfUnhook.Following then return end
+    if _G.SU_State.Following then return end
     local now = tick()
-    if now - SelfUnhook._lastTrigger < SelfUnhook._cooldown then return end
+    if now - _G.SU_State._lastTrigger < 3 then return end
     if not SU_IsHooked() then return end
 
-    SelfUnhook._lastTrigger = now
-    SelfUnhook.Following = true
-    SelfUnhook.TriggerCount = SelfUnhook.TriggerCount + 1
+    _G.SU_State._lastTrigger = now
+    _G.SU_State.Following = true
 
     local char = LocalPlayer.Character
+    local hookPos, hookCFrame
     if char then
         local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            SelfUnhook._hookPos = hrp.Position
-            SelfUnhook._hookCFrame = hrp.CFrame
-        end
+        if hrp then hookPos = hrp.Position; hookCFrame = hrp.CFrame end
     end
 
-    SelfUnhook._activeThread = task.spawn(function()
+    _G.SU_State._activeThread = task.spawn(function()
         local c = LocalPlayer.Character
-        if not c then SelfUnhook.Following = false; SelfUnhook._activeThread = nil; return end
+        if not c then SU_Abort(); return end
         local hrp = c:FindFirstChild("HumanoidRootPart")
-        if not hrp then SelfUnhook.Following = false; SelfUnhook._activeThread = nil; return end
+        if not hrp then SU_Abort(); return end
 
-        local re = ReplicatedStorage:FindFirstChild("Remotes")
-            and ReplicatedStorage.Remotes:FindFirstChild("Generator")
-            and ReplicatedStorage.Remotes.Generator:FindFirstChild("RepairEvent")
+        local re = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Generator") and ReplicatedStorage.Remotes.Generator:FindFirstChild("RepairEvent")
 
-        if not SU_IsHooked() then SelfUnhook.Following = false; SelfUnhook._activeThread = nil; return end
+        if not SU_IsHooked() then SU_Abort(); return end
 
         local tp = SU_GetRandomGeneratorPoint()
         if tp then
-            pcall(function()
-                hrp.Velocity = Vector3.zero
-                hrp.CFrame = tp.CFrame + Vector3.new(0, 3, 0)
-            end)
+            pcall(function() hrp.Velocity = Vector3.zero; hrp.CFrame = tp.CFrame + Vector3.new(0, 3, 0) end)
             task.wait(0.15)
             if re then
-                pcall(function() re:FireServer(tp, true) end)
-                task.wait(0.35)
-                pcall(function() re:FireServer(tp, false) end)
-                task.wait(0.15)
-                pcall(function() re:FireServer(tp, true) end)
-                task.wait(0.35)
+                pcall(function() re:FireServer(tp, true) end); task.wait(0.35)
+                pcall(function() re:FireServer(tp, false) end); task.wait(0.15)
+                pcall(function() re:FireServer(tp, true) end); task.wait(0.35)
                 pcall(function() re:FireServer(tp, false) end)
             end
         end
 
-        local fUntil = tick() + (SelfUnhook.FollowDuration or 30)
-        local bOff = SelfUnhook.FollowDistance or 20
+        local fUntil = tick() + 30
+        local bOff = 20
 
-        while tick() < fUntil and SelfUnhook.Enabled do
-            if not SU_IsHooked() then
-                SelfUnhook.Following = false
-                SelfUnhook._activeThread = nil
-                return
-            end
-
+        while tick() < fUntil and _G.Miyako_BypassUnhook do
+            if not SU_IsHooked() then break end
             local cc = LocalPlayer.Character
             if not cc then break end
             local r = cc:FindFirstChild("HumanoidRootPart")
@@ -182,62 +147,42 @@ local function SU_Trigger()
             task.wait(0.03)
         end
 
-        if SU_IsHooked() then
+        if SU_IsHooked() and _G.Miyako_BypassUnhook then
             local c2 = LocalPlayer.Character
             if c2 then
                 local r2 = c2:FindFirstChild("HumanoidRootPart")
                 if r2 then
-                    if SelfUnhook._hookCFrame then
-                        pcall(function() r2.Velocity = Vector3.zero; r2.CFrame = SelfUnhook._hookCFrame end)
-                    elseif SelfUnhook._hookPos then
-                        pcall(function() r2.Velocity = Vector3.zero; r2.CFrame = CFrame.new(SelfUnhook._hookPos + Vector3.new(0, 3, 0)) end)
-                    end
+                    if hookCFrame then pcall(function() r2.Velocity = Vector3.zero; r2.CFrame = hookCFrame end)
+                    elseif hookPos then pcall(function() r2.Velocity = Vector3.zero; r2.CFrame = CFrame.new(hookPos + Vector3.new(0, 3, 0)) end) end
                 end
             end
         end
-
-        SelfUnhook.Following = false
-        SelfUnhook._activeThread = nil
+        SU_Abort()
     end)
 end
 
-function SelfUnhook.Start()
-    if SelfUnhook.MonitorConn then return end
-    SelfUnhook._wasHooked = false
-    SelfUnhook.MonitorConn = RunService.Heartbeat:Connect(function()
-        if not SelfUnhook.Enabled then return end
-        local char = LocalPlayer.Character
-        if not char then return end
-        local isH = SU_IsHooked()
-        if not isH then SelfUnhook._wasHooked = false; return end
-        if not SelfUnhook._wasHooked and not SelfUnhook.Following then
-            SelfUnhook._wasHooked = true
-            SU_Trigger()
-        end
-    end)
-end
+-- Hapus loop lama kalau file di-load ulang
+if _G.Miyako_UnhookLoop then _G.Miyako_UnhookLoop:Disconnect() end
 
-function SelfUnhook.Stop()
-    if SelfUnhook.MonitorConn then
-        SelfUnhook.MonitorConn:Disconnect()
-        SelfUnhook.MonitorConn = nil
+_G.Miyako_UnhookLoop = RunService.Heartbeat:Connect(function()
+    -- BERHENTI SECARA TOTAL JIKA TOGGLE DI GUI DIMATIKAN
+    if not _G.Miyako_BypassUnhook then
+        SU_Abort()
+        _G.SU_State._wasHooked = false
+        return
     end
-    SU_Abort()
-    SelfUnhook._wasHooked = false
-end
 
-function SelfUnhook.SetEnabled(v)
-    SelfUnhook.Enabled = v and true or false
-    if SelfUnhook.Enabled then
-        SelfUnhook.Start()
-    else
-        SelfUnhook.Stop()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local isH = SU_IsHooked()
+    
+    if not isH then 
+        _G.SU_State._wasHooked = false
+        return 
     end
-end
-
--- Simpan ke environment global
-_G.Miyako_SelfUnhook = SelfUnhook
-getgenv().Miyako_SelfUnhook = SelfUnhook
-
--- Otomatis aktif saat loadstring dieksekusi
-SelfUnhook.SetEnabled(true)
+    
+    if not _G.SU_State._wasHooked and not _G.SU_State.Following then
+        _G.SU_State._wasHooked = true
+        SU_Trigger()
+    end
+end)
