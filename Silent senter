@@ -1,0 +1,175 @@
+-- ========================================================
+-- MIYAKO - SILENT FLASHLIGHT (RAW LOADSTRING)
+-- Game: Violence District
+-- ========================================================
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Konfigurasi Global terhubung ke GUI
+_G.Miyako_FlashConfig = _G.Miyako_FlashConfig or {
+    Enabled = true,
+    Laser = true,
+    TargetPart = "Head",
+    Range = 120,
+    Smooth = 0.35
+}
+
+local FlashState = {
+    Active = false,
+    LaserBeam = nil,
+    FlashlightPart = nil,
+    Connection = nil,
+    Hooked = false
+}
+
+local function TeamIs(plr, role)
+    if not plr or not plr.Team or not plr.Team.Name then return false end
+    local tn = string.lower(plr.Team.Name)
+    if role == "Killer" then return string.find(tn, "killer", 1, true) ~= nil end
+    if role == "Survivor" then return string.find(tn, "survivor", 1, true) ~= nil end
+    return false
+end
+
+local function Flash_GetActivateRemote()
+    local r = ReplicatedStorage:FindFirstChild("Remotes")
+    local i = r and r:FindFirstChild("Items")
+    local f = i and i:FindFirstChild("Flashlight")
+    local a = f and f:FindFirstChild("Activate")
+    if a and a:IsA("RemoteEvent") then return a end
+    return nil
+end
+
+local function Flash_GetTargetPart(char)
+    if not char then return nil end
+    local chosen = _G.Miyako_FlashConfig.TargetPart or "Head"
+    local p = char:FindFirstChild(chosen)
+    if p and p:IsA("BasePart") then return p end
+    return char:FindFirstChild("Head") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+end
+
+local function Flash_IsAliveChar(char)
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    return char:GetAttribute("State") ~= "Dead"
+end
+
+local function Flash_GetTarget()
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return nil end
+    local maxR = tonumber(_G.Miyako_FlashConfig.Range) or 120
+    local best, bd = nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and Flash_IsAliveChar(p.Character) and TeamIs(p, "Killer") then
+            local part = Flash_GetTargetPart(p.Character)
+            if part then
+                local d = (myRoot.Position - part.Position).Magnitude
+                if d <= maxR and d < bd then bd = d; best = part end
+            end
+        end
+    end
+    return best
+end
+
+local function Flash_ClearLaser()
+    if FlashState.LaserBeam then
+        pcall(function() FlashState.LaserBeam:Destroy() end)
+        FlashState.LaserBeam = nil
+    end
+end
+
+local function Flash_GetOrigin(cam)
+    local src = FlashState.FlashlightPart
+    if typeof and typeof(src) == "Instance" then
+        if src:IsA("BasePart") then return src.Position end
+        local p = src:FindFirstChildWhichIsA("BasePart", true)
+        if p then return p.Position end
+    end
+    local c = LocalPlayer.Character
+    local hand = c and (c:FindFirstChild("RightHand") or c:FindFirstChild("Right Arm") or c:FindFirstChild("HumanoidRootPart"))
+    if hand and hand:IsA("BasePart") then return hand.Position end
+    return cam and cam.CFrame.Position or nil
+end
+
+local function Flash_UpdateLaser(op, tp)
+    if not FlashState.LaserBeam then
+        local l = Instance.new("Part")
+        l.Name = "MiyakoFlashlightLaser"
+        l.Anchored = true
+        l.CanCollide = false
+        l.CanTouch = false
+        l.CanQuery = false
+        l.CastShadow = false
+        l.Material = Enum.Material.Neon
+        l.Color = Color3.fromRGB(255, 255, 255)
+        l.Transparency = 0
+        l.Parent = Workspace
+        FlashState.LaserBeam = l
+    end
+    local d = (tp - op).Magnitude
+    if d < 0.1 then return end
+    local l = FlashState.LaserBeam
+    l.Size = Vector3.new(0.12, 0.12, d)
+    l.CFrame = CFrame.new((op + tp) / 2, tp)
+    l.Transparency = 0.35
+end
+
+local function Flash_Step()
+    if not (_G.Miyako_FlashConfig.Enabled and FlashState.Active) then
+        if FlashState.LaserBeam then FlashState.LaserBeam.Transparency = 1 end
+        return
+    end
+    local cam = Workspace.CurrentCamera
+    local tp = Flash_GetTarget()
+    if not (cam and tp) then
+        if FlashState.LaserBeam then FlashState.LaserBeam.Transparency = 1 end
+        return
+    end
+    local smooth = math.clamp(tonumber(_G.Miyako_FlashConfig.Smooth) or 0.35, 0.05, 1)
+    local op = Flash_GetOrigin(cam)
+    if _G.Miyako_FlashConfig.Laser and op then
+        pcall(Flash_UpdateLaser, op, tp.Position)
+    elseif FlashState.LaserBeam then
+        FlashState.LaserBeam.Transparency = 1
+    end
+    pcall(function() cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, tp.Position), smooth) end)
+    pcall(function()
+        local c = LocalPlayer.Character
+        local hrp = c and c:FindFirstChild("HumanoidRootPart")
+        if hrp then hrp.CFrame = CFrame.new(hrp.Position, Vector3.new(tp.Position.X, hrp.Position.Y, tp.Position.Z)) end
+    end)
+end
+
+-- Hook Remote Senter
+if not _G.Miyako_FlashHooked then
+    _G.Miyako_FlashHooked = true
+    task.spawn(function()
+        pcall(function()
+            local remote = Flash_GetActivateRemote()
+            if not remote then return end
+            if typeof(hookmetamethod) ~= "function" then return end
+            local oldNC
+            oldNC = hookmetamethod(game, "__namecall", function(self, ...)
+                if getnamecallmethod() == "FireServer" and self == remote then
+                    local args = {...}
+                    FlashState.Active = (args[2] == true)
+                    FlashState.FlashlightPart = (args[2] == true) and args[1] or nil
+                    if not FlashState.Active and FlashState.LaserBeam then
+                        FlashState.LaserBeam.Transparency = 1
+                    end
+                end
+                return oldNC(self, ...)
+            end)
+        end)
+    end)
+end
+
+-- Loop RenderStepped
+if _G.Miyako_FlashConn then _G.Miyako_FlashConn:Disconnect() end
+_G.Miyako_FlashConn = RunService.RenderStepped:Connect(function()
+    pcall(Flash_Step)
+end)
