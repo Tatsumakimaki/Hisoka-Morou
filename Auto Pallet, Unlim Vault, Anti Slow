@@ -1,9 +1,12 @@
 -- ========================================================
--- MIYAKO - SURVIVOR PRO MODULE (Auto Pallet, Unlim Vault, Anti Slow)
+-- MIYAKO - SURVIVOR PRO BACKEND MODULE (Auto Pallet, Unlimited Vault, Anti Slow)
+-- Murni Logic (Dikontrol dari Obsidian UI Script Utama)
 -- ========================================================
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
 _G.Miyako_SurvivorConfig = _G.Miyako_SurvivorConfig or {
@@ -13,57 +16,139 @@ _G.Miyako_SurvivorConfig = _G.Miyako_SurvivorConfig or {
     AntiSlowVault = false
 }
 
--- FITUR 1: AUTO PALLET (PALET REFLEX)
-task.spawn(function()
-    while task.wait(0.1) do
-        if _G.Miyako_SurvivorConfig.AutoPallet then
-            pcall(function()
-                local char = LocalPlayer.Character
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    -- Cari pallet terdekat di map
-                    for _, obj in ipairs(Workspace:GetDescendants()) do
-                        if obj.Name == "Pallet" or obj.Name == "Palletwrong" then
-                            local part = obj:IsA("Model") and obj:GetPivot().Position or (obj:IsA("BasePart") and obj.Position)
-                            if part then
-                                local dist = (part - hrp.Position).Magnitude
-                                if dist <= (_G.Miyako_SurvivorConfig.PalletDistance or 20) then
-                                    -- Cari remote atau event untuk menjatuhkan pallet
-                                    local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes", true)
-                                    if remotes then
-                                        for _, remote in ipairs(remotes:GetDescendants()) do
-                                            if remote:IsA("RemoteEvent") and (string.find(string.lower(remote.Name), "pallet") or string.find(string.lower(remote.Name), "drop")) then
-                                                remote:FireServer(obj)
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end)
+local function TeamIs(plr, role)
+    if not plr or not plr.Team or not plr.Team.Name then return false end
+    local tn = string.lower(plr.Team.Name)
+    if role == "Killer" then return string.find(tn, "killer", 1, true) ~= nil end
+    if role == "Survivor" then return string.find(tn, "survivor", 1, true) ~= nil end
+    return false
+end
+
+-- ==========================================
+-- 1. FITUR AUTO PALLET (PALET REFLEX)
+-- ==========================================
+local _lastPalletDrop = 0
+local _usedPallets = {}
+
+local function Pallet_GetKillerRoot()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and TeamIs(plr, "Killer") and plr.Character then
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then return hrp end
         end
     end
-end)
+    return nil
+end
 
--- FITUR 2 & 3: UNLIMITED VAULT & ANTI SLOW VAULT
-task.spawn(function()
-    while task.wait(0.5) do
-        pcall(function()
-            local map = Workspace:FindFirstChild("Map") or Workspace
-            for _, v in ipairs(map:GetDescendants()) do
-                if v.Name == "Window" or string.find(string.lower(v.Name), "vault") then
-                    if _G.Miyako_SurvivorConfig.UnlimitedVault then
-                        v:SetAttribute("Blocked", false)
-                        v:SetAttribute("IsBlocked", false)
-                    end
-                    if _G.Miyako_SurvivorConfig.AntiSlowVault then
-                        v:SetAttribute("SlowVault", false)
-                        v:SetAttribute("IsSlow", false)
-                    end
+local function Pallet_GetAllPallets()
+    local list = {}
+    local map = Workspace:FindFirstChild("Map")
+    if not map then return list end
+    for _, obj in ipairs(map:GetDescendants()) do
+        if obj.Name == "Palletwrong" and (obj:IsA("Model") or obj:IsA("Folder")) then
+            table.insert(list, obj)
+        end
+    end
+    return list
+end
+
+local function Pallet_IsDropped(palletModel)
+    if not palletModel or not palletModel.Parent then return true end
+    if _usedPallets[palletModel] then return true end
+    local ok, destroyed = pcall(function() return palletModel:GetAttribute("Destroyed") end)
+    if ok and destroyed == true then return true end
+    local ok2, broken = pcall(function() return palletModel:GetAttribute("Broken") end)
+    if ok2 and broken == true then return true end
+    if not palletModel:FindFirstChildWhichIsA("BasePart", true) then return true end
+    return false
+end
+
+local function Pallet_GetPointSlide(model)
+    local slide = model:FindFirstChild("PalletPointSlide")
+    if slide then return slide end
+    for _, child in ipairs(model:GetDescendants()) do
+        if child.Name == "PalletPointSlide" then return child end
+    end
+    return model:FindFirstChild("PalletPoint")
+end
+
+RunService.Heartbeat:Connect(function()
+    if not _G.Miyako_SurvivorConfig.AutoPallet then return end
+    
+    local now = tick()
+    if now - _lastPalletDrop < 2.5 then return end
+    
+    pcall(function()
+        local char = LocalPlayer.Character
+        local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not myRoot or not hum or hum.Health <= 0 then return end
+        
+        local killerRoot = Pallet_GetKillerRoot()
+        if not killerRoot then return end
+        if (myRoot.Position - killerRoot.Position).Magnitude > (_G.Miyako_SurvivorConfig.PalletDistance or 20) then return end
+        
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        local palletFold = remotes and remotes:FindFirstChild("Pallet")
+        local dropEvent = palletFold and palletFold:FindFirstChild("PalletDropEvent")
+        if not dropEvent then return end
+        
+        local bestPallet, bestDist = nil, 8
+        for _, pal in ipairs(Pallet_GetAllPallets()) do
+            if not Pallet_IsDropped(pal) then
+                local refPart = pal:FindFirstChild("PalletPoint")
+                    or pal:FindFirstChild("PalletPointSlide")
+                    or pal:FindFirstChildWhichIsA("BasePart", true)
+                if refPart then
+                    local d = (myRoot.Position - refPart.Position).Magnitude
+                    if d < bestDist then bestDist = d; bestPallet = pal end
                 end
             end
-        end)
-    end
+        end
+        
+        if bestPallet then
+            local fireTarget = Pallet_GetPointSlide(bestPallet)
+            if fireTarget then
+                pcall(function() dropEvent:FireServer(fireTarget) end)
+                _usedPallets[bestPallet] = true
+                _lastPalletDrop = tick()
+            end
+        end
+    end)
+end)
+
+-- ==========================================
+-- 2. UNLIMITED VAULT & ANTI SLOW VAULT
+-- ==========================================
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        local map = Workspace:FindFirstChild("Map") or Workspace
+        for _, v in ipairs(map:GetDescendants()) do
+            if v.Name == "Window" or string.find(string.lower(v.Name), "vault") or v.Name == "VaultTrigger" then
+                if _G.Miyako_SurvivorConfig.UnlimitedVault then
+                    v:SetAttribute("Blocked", false)
+                    v:SetAttribute("IsBlocked", false)
+                end
+                if _G.Miyako_SurvivorConfig.AntiSlowVault then
+                    v:SetAttribute("SlowVault", false)
+                    v:SetAttribute("IsSlow", false)
+                    v:SetAttribute("Cooldown", false)
+                end
+            end
+        end
+        
+        -- Anti-slow backup speed character
+        local char = LocalPlayer.Character
+        if char and _G.Miyako_SurvivorConfig.AntiSlowVault then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum and hum.WalkSpeed < 16 then
+                hum.WalkSpeed = 16
+            end
+        end
+    end)
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    _usedPallets = {}
 end)
