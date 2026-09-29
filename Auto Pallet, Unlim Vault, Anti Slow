@@ -1,0 +1,69 @@
+-- ========================================================
+-- MIYAKO - SURVIVOR PRO MODULE (Auto Pallet, Unlim Vault, Anti Slow)
+-- ========================================================
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+
+_G.Miyako_SurvivorConfig = _G.Miyako_SurvivorConfig or {
+    AutoPallet = false,
+    PalletDistance = 20,
+    UnlimitedVault = false,
+    AntiSlowVault = false
+}
+
+-- FITUR 1: AUTO PALLET (PALET REFLEX)
+task.spawn(function()
+    while task.wait(0.1) do
+        if _G.Miyako_SurvivorConfig.AutoPallet then
+            pcall(function()
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    -- Cari pallet terdekat di map
+                    for _, obj in ipairs(Workspace:GetDescendants()) do
+                        if obj.Name == "Pallet" or obj.Name == "Palletwrong" then
+                            local part = obj:IsA("Model") and obj:GetPivot().Position or (obj:IsA("BasePart") and obj.Position)
+                            if part then
+                                local dist = (part - hrp.Position).Magnitude
+                                if dist <= (_G.Miyako_SurvivorConfig.PalletDistance or 20) then
+                                    -- Cari remote atau event untuk menjatuhkan pallet
+                                    local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes", true)
+                                    if remotes then
+                                        for _, remote in ipairs(remotes:GetDescendants()) do
+                                            if remote:IsA("RemoteEvent") and (string.find(string.lower(remote.Name), "pallet") or string.find(string.lower(remote.Name), "drop")) then
+                                                remote:FireServer(obj)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- FITUR 2 & 3: UNLIMITED VAULT & ANTI SLOW VAULT
+task.spawn(function()
+    while task.wait(0.5) do
+        pcall(function()
+            local map = Workspace:FindFirstChild("Map") or Workspace
+            for _, v in ipairs(map:GetDescendants()) do
+                if v.Name == "Window" or string.find(string.lower(v.Name), "vault") then
+                    if _G.Miyako_SurvivorConfig.UnlimitedVault then
+                        v:SetAttribute("Blocked", false)
+                        v:SetAttribute("IsBlocked", false)
+                    end
+                    if _G.Miyako_SurvivorConfig.AntiSlowVault then
+                        v:SetAttribute("SlowVault", false)
+                        v:SetAttribute("IsSlow", false)
+                    end
+                end
+            end
+        end)
+    end
+end)
