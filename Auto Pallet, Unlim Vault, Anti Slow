@@ -1,6 +1,5 @@
 -- ========================================================
--- MIYAKO - SURVIVOR PRO BACKEND MODULE (Auto Pallet, Unlimited Vault, Anti Slow)
--- Murni Logic (Dikontrol dari Obsidian UI Script Utama)
+-- MIYAKO - SURVIVOR PRO BACKEND MODULE (Fixed Toggle OFF)
 -- ========================================================
 
 local Players = game:GetService("Players")
@@ -73,7 +72,8 @@ local function Pallet_GetPointSlide(model)
 end
 
 RunService.Heartbeat:Connect(function()
-    if not _G.Miyako_SurvivorConfig.AutoPallet then return end
+    -- Cek langsung status config, jika false langsung skip/berhenti
+    if not _G.Miyako_SurvivorConfig or not _G.Miyako_SurvivorConfig.AutoPallet then return end
     
     local now = tick()
     if now - _lastPalletDrop < 2.5 then return end
@@ -125,24 +125,17 @@ RunService.Heartbeat:Connect(function()
         local map = Workspace:FindFirstChild("Map") or Workspace
         for _, v in ipairs(map:GetDescendants()) do
             if v.Name == "Window" or string.find(string.lower(v.Name), "vault") or v.Name == "VaultTrigger" then
-                if _G.Miyako_SurvivorConfig.UnlimitedVault then
+                -- Unlimited Vault Check
+                if _G.Miyako_SurvivorConfig and _G.Miyako_SurvivorConfig.UnlimitedVault then
                     v:SetAttribute("Blocked", false)
                     v:SetAttribute("IsBlocked", false)
                 end
-                if _G.Miyako_SurvivorConfig.AntiSlowVault then
+                -- Anti Slow Vault Check
+                if _G.Miyako_SurvivorConfig and _G.Miyako_SurvivorConfig.AntiSlowVault then
                     v:SetAttribute("SlowVault", false)
                     v:SetAttribute("IsSlow", false)
                     v:SetAttribute("Cooldown", false)
                 end
-            end
-        end
-        
-        -- Anti-slow backup speed character
-        local char = LocalPlayer.Character
-        if char and _G.Miyako_SurvivorConfig.AntiSlowVault then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum and hum.WalkSpeed < 16 then
-                hum.WalkSpeed = 16
             end
         end
     end)
