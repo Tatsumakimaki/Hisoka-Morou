@@ -1,64 +1,84 @@
 -- ========================================================
--- MIYAKO - CLEAN STUN INDICATOR (RAW LOADSTRING)
+-- MIYAKO - MODERN CLEAN STUN INDICATOR (RAW LOADSTRING)
+-- Fix: 2D Local Audio (SoundService) + Auto Preload
 -- Game: Violence District
 -- ========================================================
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
-local Workspace = game:GetService("Workspace")
+local SoundService = game:GetService("SoundService")
+local ContentProvider = game:GetService("ContentProvider")
 local LocalPlayer = Players.LocalPlayer
 
 _G.Miyako_StunConfig = _G.Miyako_StunConfig or {
     Enabled = true,
     SoundAlert = true,
-    SoundChoice = "Kururin Kuru",
+    SoundChoice = "Default",
     Duration = 2.8
 }
 
-local SoundIDs = {
+local SoundList = {
+    ["Default"]      = "rbxassetid://6534947240", -- Clean Bell Ding
     ["Kururin Kuru"] = "rbxassetid://13506161476",
     ["Bonk"]         = "rbxassetid://6341258667",
     ["Vine Boom"]    = "rbxassetid://5332433064",
     ["Metal Pipe"]   = "rbxassetid://9114223190",
     ["Bruh"]         = "rbxassetid://4275842574",
-    ["Bell"]         = "rbxassetid://6534947240",
     ["Hitmarker"]    = "rbxassetid://160432334",
     ["Anime Wow"]    = "rbxassetid://9067341031",
     ["Taco Bell"]    = "rbxassetid://6939227845"
 }
 
-local function playStunSound()
-    if not _G.Miyako_StunConfig.SoundAlert then return end
-    pcall(function()
-        local sId = SoundIDs[_G.Miyako_StunConfig.SoundChoice] or SoundIDs["Kururin Kuru"]
-        local sound = Instance.new("Sound")
-        sound.Name = "MiyakoStunSound"
-        sound.SoundId = sId
-        sound.Volume = 1
-        sound.Parent = Workspace
-        sound:Play()
-        sound.Ended:Connect(function()
-            sound:Destroy()
+-- FUNGSI PUTAR SUARA (2D LOCAL AUDIO VIA SOUNDSERVICE)
+local function playSound(soundKey)
+    task.spawn(function()
+        pcall(function()
+            local soundId = SoundList[soundKey] or SoundList["Default"]
+            local sound = Instance.new("Sound")
+            sound.Name = "MiyakoStunLocalSound"
+            sound.SoundId = soundId
+            sound.Volume = 2.5
+            sound.RollOffMaxDistance = 100000
+            sound.Parent = SoundService
+
+            -- Pastikan audio sudah terunduh sebelum dimainkan
+            if not sound.IsLoaded then
+                pcall(function() ContentProvider:PreloadAsync({sound}) end)
+            end
+
+            -- Mainkan langsung di speaker player (2D stereo)
+            SoundService:PlayLocalSound(sound)
+
+            task.delay(3.5, function()
+                if sound then sound:Destroy() end
+            end)
         end)
     end)
 end
 
-local function showCleanStunUI(head)
+-- Hubungkan fungsi preview ke tombol di GUI utama
+_G.Miyako_PreviewStunSound = function()
+    local choice = _G.Miyako_StunConfig and _G.Miyako_StunConfig.SoundChoice or "Default"
+    playSound(choice)
+end
+
+-- DESAIN BADGE STUN MODERN
+local function createModernStunBadge(head, duration)
     if not head or not head.Parent then return end
-    local old = head:FindFirstChild("MiyakoStunGui")
-    if old then old:Destroy() end
+    local existing = head:FindFirstChild("MiyakoStunBadge")
+    if existing then existing:Destroy() end
 
     local bill = Instance.new("BillboardGui")
-    bill.Name = "MiyakoStunGui"
+    bill.Name = "MiyakoStunBadge"
     bill.Adornee = head
-    bill.Size = UDim2.fromOffset(130, 36)
-    bill.StudsOffset = Vector3.new(0, 2.8, 0)
+    bill.Size = UDim2.fromOffset(125, 34)
+    bill.StudsOffset = Vector3.new(0, 3.2, 0)
     bill.AlwaysOnTop = true
     bill.Parent = head
 
     local frame = Instance.new("Frame")
     frame.Size = UDim2.fromScale(1, 1)
-    frame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
     frame.BackgroundTransparency = 0.15
     frame.BorderSizePixel = 0
     frame.Parent = bill
@@ -68,8 +88,9 @@ local function showCleanStunUI(head)
     corner.Parent = frame
 
     local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(245, 190, 60)
-    stroke.Thickness = 1.2
+    stroke.Color = Color3.fromRGB(255, 195, 60)
+    stroke.Thickness = 1.4
+    stroke.Transparency = 0.2
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     stroke.Parent = frame
 
@@ -78,12 +99,12 @@ local function showCleanStunUI(head)
     label.BackgroundTransparency = 1
     label.Font = Enum.Font.GothamBold
     label.Text = "⚡ STUNNED"
-    label.TextColor3 = Color3.fromRGB(255, 215, 90)
-    label.TextSize = 13
+    label.TextColor3 = Color3.fromRGB(255, 225, 110)
+    label.TextSize = 12
     label.Parent = frame
 
     local barBg = Instance.new("Frame")
-    barBg.Size = UDim2.new(0.85, 0, 0, 4)
+    barBg.Size = UDim2.new(0.85, 0, 0, 3)
     barBg.Position = UDim2.new(0.075, 0, 0.75, 0)
     barBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
     barBg.BorderSizePixel = 0
@@ -95,7 +116,7 @@ local function showCleanStunUI(head)
 
     local barFill = Instance.new("Frame")
     barFill.Size = UDim2.new(1, 0, 1, 0)
-    barFill.BackgroundColor3 = Color3.fromRGB(245, 190, 60)
+    barFill.BackgroundColor3 = Color3.fromRGB(255, 195, 60)
     barFill.BorderSizePixel = 0
     barFill.Parent = barBg
 
@@ -103,26 +124,31 @@ local function showCleanStunUI(head)
     fillCorner.CornerRadius = UDim.new(1, 0)
     fillCorner.Parent = barFill
 
-    playStunSound()
+    -- Bunyikan suara alert jika diaktifkan
+    if _G.Miyako_StunConfig.SoundAlert then
+        playSound(_G.Miyako_StunConfig.SoundChoice)
+    end
 
-    local dur = _G.Miyako_StunConfig.Duration or 2.8
-    TweenService:Create(barFill, TweenInfo.new(dur, Enum.EasingStyle.Linear), {Size = UDim2.new(0, 0, 1, 0)}):Play()
+    -- Animasi mengecilnya bar durasi stun
+    TweenService:Create(barFill, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Size = UDim2.new(0, 0, 1, 0)}):Play()
 
-    task.delay(dur, function()
+    -- Animasi Fade out saat stun selesai
+    task.delay(duration, function()
         if bill and bill.Parent then
-            local fade = TweenService:Create(frame, TweenInfo.new(0.25), {BackgroundTransparency = 1})
-            TweenService:Create(label, TweenInfo.new(0.25), {TextTransparency = 1}):Play()
-            TweenService:Create(stroke, TweenInfo.new(0.25), {Transparency = 1}):Play()
-            TweenService:Create(barBg, TweenInfo.new(0.25), {BackgroundTransparency = 1}):Play()
-            fade:Play()
-            fade.Completed:Connect(function()
+            local t1 = TweenService:Create(frame, TweenInfo.new(0.2), {BackgroundTransparency = 1})
+            local t2 = TweenService:Create(label, TweenInfo.new(0.2), {TextTransparency = 1})
+            local t3 = TweenService:Create(stroke, TweenInfo.new(0.2), {Transparency = 1})
+            local t4 = TweenService:Create(barBg, TweenInfo.new(0.2), {BackgroundTransparency = 1})
+            t1:Play() t2:Play() t3:Play() t4:Play()
+            t1.Completed:Connect(function()
                 bill:Destroy()
             end)
         end
     end)
 end
 
-local function hookKillerChar(char)
+-- DETEKSI STUN PADA KILLER
+local function setupKillerDetection(char)
     if not char then return end
     local hum = char:WaitForChild("Humanoid", 4)
     local head = char:WaitForChild("Head", 4)
@@ -132,11 +158,12 @@ local function hookKillerChar(char)
     local function triggerStun()
         if debounce or not _G.Miyako_StunConfig.Enabled then return end
         debounce = true
-        showCleanStunUI(head)
+        createModernStunBadge(head, _G.Miyako_StunConfig.Duration or 2.8)
         task.wait(2.5)
         debounce = false
     end
 
+    -- Deteksi lewat status Attribute
     char.AttributeChanged:Connect(function(name)
         if string.find(string.lower(name), "stun") then
             local val = char:GetAttribute(name)
@@ -146,6 +173,7 @@ local function hookKillerChar(char)
         end
     end)
 
+    -- Deteksi lewat Animasi Stun
     local anim = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 3)
     if anim then
         anim.AnimationPlayed:Connect(function(track)
@@ -158,13 +186,14 @@ local function hookKillerChar(char)
     end
 end
 
-local function setupKiller(plr)
+-- Kaitkan ke semua pemain di dalam server
+local function hookPlayer(plr)
     if plr == LocalPlayer then return end
-    if plr.Character then hookKillerChar(plr.Character) end
-    plr.CharacterAdded:Connect(hookKillerChar)
+    if plr.Character then setupKillerDetection(plr.Character) end
+    plr.CharacterAdded:Connect(setupKillerDetection)
 end
 
 for _, p in ipairs(Players:GetPlayers()) do
-    setupKiller(p)
+    hookPlayer(p)
 end
-Players.PlayerAdded:Connect(setupKiller)
+Players.PlayerAdded:Connect(hookPlayer)
