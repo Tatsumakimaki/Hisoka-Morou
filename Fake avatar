@@ -1,0 +1,119 @@
+-- ========================================================
+-- MIYAKO - FAKE AVATAR SYSTEM (RAW LOADSTRING)
+-- ========================================================
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+_G.Miyako_FakeAvatarConfig = _G.Miyako_FakeAvatarConfig or {
+    Enabled = true,
+    Preset = "Self Avatar",
+    TargetUsername = ""
+}
+
+local OriginalDescription = nil
+local CurrentAppliedId = nil
+
+local Presets = {
+    ["Self Avatar"] = LocalPlayer.UserId,
+    ["Noob"]        = 156,
+    ["Bacon Hair"]  = 2862369,
+    ["Guest"]       = 100000000,
+    ["Korblox"]     = 131252994
+}
+
+local function saveOriginal()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and not OriginalDescription then
+        pcall(function()
+            OriginalDescription = hum:GetAppliedDescription()
+        end)
+    end
+end
+
+local function removeAccessories(char)
+    for _, v in ipairs(char:GetDescendants()) do
+        if v:IsA("Accessory") or v:IsA("Clothing") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") then
+            pcall(function() v:Destroy() end)
+        end
+    end
+end
+
+local function applyAvatarById(userId)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    task.spawn(function()
+        local s, desc = pcall(function()
+            return Players:GetHumanoidDescriptionFromUserId(userId)
+        end)
+
+        if s and desc and char and char.Parent then
+            removeAccessories(char)
+            task.wait(0.15)
+            pcall(function()
+                hum:ApplyDescriptionClientServer(desc)
+            end)
+        end
+    end)
+end
+
+local function applyFakeAvatar()
+    if not _G.Miyako_FakeAvatarConfig.Enabled then return end
+    saveOriginal()
+
+    local customUser = _G.Miyako_FakeAvatarConfig.TargetUsername
+    if customUser and customUser:gsub("%s+", "") ~= "" then
+        customUser = customUser:gsub("@", "")
+        local s, targetId = pcall(function()
+            return Players:GetUserIdFromNameAsync(customUser)
+        end)
+        if s and targetId then
+            CurrentAppliedId = targetId
+            applyAvatarById(targetId)
+            return
+        end
+    end
+
+    local presetChoice = _G.Miyako_FakeAvatarConfig.Preset or "Self Avatar"
+    local presetId = Presets[presetChoice] or Presets["Self Avatar"]
+    CurrentAppliedId = presetId
+    applyAvatarById(presetId)
+end
+
+local function restoreOriginal()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and OriginalDescription then
+        removeAccessories(char)
+        task.wait(0.15)
+        pcall(function()
+            hum:ApplyDescriptionClientServer(OriginalDescription)
+        end)
+        OriginalDescription = nil
+        CurrentAppliedId = nil
+    end
+end
+
+-- Eksekusi awal
+if _G.Miyako_FakeAvatarConfig.Enabled then
+    applyFakeAvatar()
+else
+    restoreOriginal()
+end
+
+-- Handler respawn agar avatar tidak hilang saat ganti ronde
+if not _G.Miyako_FakeAvatarHooked then
+    _G.Miyako_FakeAvatarHooked = true
+    LocalPlayer.CharacterAdded:Connect(function(char)
+        task.wait(0.8)
+        if _G.Miyako_FakeAvatarConfig.Enabled and CurrentAppliedId then
+            applyAvatarById(CurrentAppliedId)
+        end
+    end)
+end
