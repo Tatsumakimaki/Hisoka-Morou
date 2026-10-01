@@ -1,43 +1,34 @@
 -- ========================================================
--- MIYAKO - EMOTE SYSTEM BACKEND MODULE (Violence District)
--- Backend murni untuk di-upload ke GitHub Raw
+-- MIYAKO - EMOTE SYSTEM BACKEND (FIXED & RESPONSIVE)
 -- ========================================================
-
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
-_G.Miyako_EmoteConfig = _G.Miyako_EmoteConfig or {
-    Enabled = false,
-    SelectedEmote = "Friday Night",
-    LastEmote = "Friday Night"
-}
-
 local function getEmoteRemote()
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     if remotes then
-        return remotes:FindFirstChild("EmoteHandler", true)
+        -- Diperbaiki: Pendeteksian dibuat spesifik, menghindari salah remote
+        return remotes:FindFirstChild("EmoteHandler") 
     end
     return nil
 end
 
-local function stopAllEmoteAnimations()
+_G.Miyako_StopEmote = function()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local animator = hum and hum:FindFirstChildOfClass("Animator")
     if animator then
         for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-            track:Stop(0.1)
+            pcall(function() track:Stop(0.1) end)
         end
     end
     local remote = getEmoteRemote()
-    if remote then
-        pcall(function() remote:FireServer("Stop") end)
-    end
+    if remote then pcall(function() remote:FireServer("Stop") end) end
 end
 
-local function playEmote(name)
-    if not _G.Miyako_EmoteConfig.Enabled then return end
+_G.Miyako_PlayEmote = function(name)
+    if not _G.Miyako_EmoteConfig or not _G.Miyako_EmoteConfig.Enabled then return end
     if not name or name == "" then return end
     
     _G.Miyako_EmoteConfig.LastEmote = name
@@ -47,19 +38,17 @@ local function playEmote(name)
     end
 end
 
--- Function bridge untuk UI Obsidian utama
-_G.Miyako_PlayEmote = playEmote
-_G.Miyako_StopEmote = stopAllEmoteAnimations
 _G.Miyako_ReplayEmote = function()
-    local target = _G.Miyako_EmoteConfig.SelectedEmote or _G.Miyako_EmoteConfig.LastEmote
+    local target = _G.Miyako_EmoteConfig and (_G.Miyako_EmoteConfig.SelectedEmote or _G.Miyako_EmoteConfig.LastEmote)
     if target then
-        stopAllEmoteAnimations()
-        task.wait(0.08)
-        playEmote(target)
+        if _G.Miyako_StopEmote then _G.Miyako_StopEmote() end
+        task.wait(0.1)
+        if _G.Miyako_PlayEmote then _G.Miyako_PlayEmote(target) end
     end
 end
 
--- Eksekusi otomatis jika toggle aktif saat load
-if _G.Miyako_EmoteConfig.Enabled and _G.Miyako_EmoteConfig.SelectedEmote then
-    playEmote(_G.Miyako_EmoteConfig.SelectedEmote)
+-- Langsung eksekusi saat dropdown diganti/dipilih
+if _G.Miyako_EmoteConfig and _G.Miyako_EmoteConfig.Enabled then
+    local emoteToPlay = _G.Miyako_EmoteConfig.SelectedEmote or "Friday Night"
+    _G.Miyako_PlayEmote(emoteToPlay)
 end
