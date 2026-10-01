@@ -1,52 +1,35 @@
 -- ========================================================
--- MIYAKO - FAKE AVATAR BACKEND MODULE (EXPANDED PRESETS)
--- Backend murni untuk di-upload ke GitHub Raw
+-- MIYAKO - FAKE AVATAR V2 BACKEND (FIXED & ANTI-RESET)
 -- ========================================================
-
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-_G.Miyako_FakeAvatarConfig = _G.Miyako_FakeAvatarConfig or {
-    Enabled = false,
-    Preset = "Purple King",
-    TargetUsername = ""
-}
+-- Simpan state di _G agar tidak ter-reset saat dropdown diganti
+_G.Miyako_OrigAvatarDesc = _G.Miyako_OrigAvatarDesc or nil
+_G.Miyako_FakeAvatarLoaded = _G.Miyako_FakeAvatarLoaded or false
 
--- Koleksi Lengkap Preset Avatar (User ID Outfit Asli)
 local PRESET_IDS = {
-    ["Purple King"]         = 1283674681, -- Outfit Purple King Stylized
-    ["Korblox"]             = 13416518,   -- Korblox Deathspeaker
-    ["Headless"]            = 261,        -- Headless Horseman User
-    ["Dominus Flex"]        = 5312389,    -- Linkmon99 / Dominus Rich
-    ["Valkyrie Helm"]       = 16138964,   -- Valkyrie Aesthetic
-    ["Slender"]             = 1714589254, -- Slender Boy Style
-    ["Stitchface"]          = 156828551,  -- Stitchface Gang Style
-    ["Super Happy Face"]    = 246524956,  -- SSHF Rich Girl/Boy
-    ["E-Boy Aesthetic"]     = 1856382941, -- E-Boy Style
-    ["E-Girl Aesthetic"]    = 1928472911, -- E-Girl Style
-    ["Hacker / Anonymous"]  = 138128374,  -- Black Hoodie / Mask
-    ["Guest 666"]           = 1845187,    -- Creepy Red Guest
-    ["Classic Noob"]        = 156,        -- Classic Yellow/Blue Noob
-    ["Bacon Hair"]          = 1619854747, -- Bacon Boy
-    ["Anime Style"]         = 2394819281, -- Stylized Anime Character
+    ["Purple King"]         = 1283674681,
+    ["Korblox"]             = 13416518,
+    ["Headless"]            = 261,
+    ["Dominus Flex"]        = 5312389,
+    ["Valkyrie Helm"]       = 16138964,
+    ["Slender"]             = 1714589254,
+    ["Stitchface"]          = 156828551,
+    ["Super Happy Face"]    = 246524956,
+    ["E-Boy Aesthetic"]     = 1856382941,
+    ["E-Girl Aesthetic"]    = 1928472911,
+    ["Hacker / Anonymous"]  = 138128374,
+    ["Guest 666"]           = 1845187,
+    ["Classic Noob"]        = 156,
+    ["Bacon Hair"]          = 1619854747,
+    ["Anime Style"]         = 2394819281,
     ["Self Avatar"]         = LocalPlayer.UserId
 }
-
-local OriginalDescription = nil
-local CurrentLoadedId = nil
 
 local function getHumanoid()
     local char = LocalPlayer.Character
     return char and char:FindFirstChildOfClass("Humanoid")
-end
-
-local function saveOriginal()
-    local hum = getHumanoid()
-    if hum and not OriginalDescription then
-        pcall(function()
-            OriginalDescription = hum:GetAppliedDescription()
-        end)
-    end
 end
 
 local function clearAccessories(char)
@@ -57,14 +40,15 @@ local function clearAccessories(char)
     end
 end
 
-local function applyTargetDescription(userId)
-    if not userId then return end
+local function applyTargetAvatar(userId)
     local hum = getHumanoid()
     local char = LocalPlayer.Character
     if not hum or not char then return end
 
-    saveOriginal()
-    CurrentLoadedId = userId
+    -- Hanya simpan avatar asli jika belum pernah disimpan
+    if not _G.Miyako_OrigAvatarDesc then
+        pcall(function() _G.Miyako_OrigAvatarDesc = hum:GetAppliedDescription() end)
+    end
 
     task.spawn(function()
         local success, desc = pcall(function()
@@ -73,10 +57,10 @@ local function applyTargetDescription(userId)
 
         if success and desc then
             clearAccessories(char)
-            task.wait(0.08)
-            pcall(function()
-                hum:ApplyDescriptionClientServer(desc)
-            end)
+            task.wait(0.1)
+            -- Eksekusi ganda agar 100% tembus di executor apapun
+            pcall(function() hum:ApplyDescriptionClientServer(desc) end)
+            pcall(function() hum:ApplyDescription(desc) end) 
         end
     end)
 end
@@ -84,50 +68,43 @@ end
 local function restoreOriginal()
     local hum = getHumanoid()
     local char = LocalPlayer.Character
-    if hum and char and OriginalDescription then
+    if hum and char and _G.Miyako_OrigAvatarDesc then
         clearAccessories(char)
-        task.wait(0.08)
-        pcall(function()
-            hum:ApplyDescriptionClientServer(OriginalDescription)
-            CurrentLoadedId = nil
-        end)
+        task.wait(0.1)
+        pcall(function() hum:ApplyDescriptionClientServer(_G.Miyako_OrigAvatarDesc) end)
+        pcall(function() hum:ApplyDescription(_G.Miyako_OrigAvatarDesc) end)
     end
 end
 
-local function updateAvatar()
-    if not _G.Miyako_FakeAvatarConfig.Enabled then
+-- Fungsi Utama yang dihubungkan ke GUI
+_G.Miyako_UpdateFakeAvatar = function()
+    if not _G.Miyako_FakeAvatarConfig or not _G.Miyako_FakeAvatarConfig.Enabled then
         restoreOriginal()
         return
     end
-
-    -- 1. Cek Via Username
+    
     local userTarget = _G.Miyako_FakeAvatarConfig.TargetUsername
     if userTarget and userTarget ~= "" then
         task.spawn(function()
-            local success, targetId = pcall(function()
-                return Players:GetUserIdFromNameAsync(userTarget)
-            end)
-            if success and targetId then
-                applyTargetDescription(targetId)
-            end
+            local s, id = pcall(function() return Players:GetUserIdFromNameAsync(userTarget) end)
+            if s and id then applyTargetAvatar(id) end
         end)
         return
     end
-
-    -- 2. Cek Preset Dropdown
-    local selectedPreset = _G.Miyako_FakeAvatarConfig.Preset or "Purple King"
-    local presetId = PRESET_IDS[selectedPreset]
-    if presetId then
-        applyTargetDescription(presetId)
-    end
+    
+    local preset = _G.Miyako_FakeAvatarConfig.Preset or "Purple King"
+    local presetId = PRESET_IDS[preset]
+    if presetId then applyTargetAvatar(presetId) end
 end
 
--- Hook saat respawn karakter
-LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.8)
-    if _G.Miyako_FakeAvatarConfig.Enabled and CurrentLoadedId then
-        applyTargetDescription(CurrentLoadedId)
-    end
-end)
+-- Mencegah bug respawn berlapis
+if not _G.Miyako_FakeAvatarLoaded then
+    _G.Miyako_FakeAvatarLoaded = true
+    LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(1)
+        if _G.Miyako_UpdateFakeAvatar then _G.Miyako_UpdateFakeAvatar() end
+    end)
+end
 
-updateAvatar()
+-- Langsung panggil saat di-load
+_G.Miyako_UpdateFakeAvatar()
