@@ -1,0 +1,94 @@
+-- ==========================================
+-- AUTO SKILL CHECK (STANDALONE RAW - MIYAKO)
+-- ==========================================
+getgenv().Miyako_SkillCheck = getgenv().Miyako_SkillCheck or {
+    Enabled = false,
+    Mode = "Instant",
+    Busy = false
+}
+
+if getgenv()._MiyakoSkillCheckLoaded then return end
+getgenv()._MiyakoSkillCheckLoaded = true
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
+local VirtualInputManager = nil
+pcall(function() VirtualInputManager = game:GetService("VirtualInputManager") end)
+
+local LocalPlayer = Players.LocalPlayer
+local SC_TouchID = 8822
+local SC_ActionPath = "Survivor-mob.Controls.action.check"
+
+local function SC_PressSpace()
+    if not VirtualInputManager then return end
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+        task.wait()
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+    end)
+end
+
+local function SC_GetActionTarget()
+    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not pGui then return nil end
+    local current = pGui
+    for seg in string.gmatch(SC_ActionPath, "[^%.]+") do
+        current = current and current:FindFirstChild(seg)
+    end
+    return current
+end
+
+local function SC_TriggerMobileButton()
+    local b = SC_GetActionTarget()
+    if b and b:IsA("GuiObject") then
+        local p, s = b.AbsolutePosition, b.AbsoluteSize
+        local i = GuiService:GetGuiInset()
+        local cx, cy = p.X + (s.X / 2) + i.X, p.Y + (s.Y / 2) + i.Y
+        pcall(function()
+            VirtualInputManager:SendTouchEvent(SC_TouchID, 0, cx, cy)
+            task.wait(0.01)
+            VirtualInputManager:SendTouchEvent(SC_TouchID, 2, cx, cy)
+        end)
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    local cfg = getgenv().Miyako_SkillCheck
+    if not cfg or not cfg.Enabled or cfg.Busy then return end
+
+    local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not pGui then return end
+    local prompt = pGui:FindFirstChild("SkillCheckPromptGui")
+    if not prompt then return end
+    local check = prompt:FindFirstChild("Check")
+    if not check or not check.Visible then return end
+    local line = check:FindFirstChild("Line")
+    local goal = check:FindFirstChild("Goal")
+    if not line or not goal then return end
+
+    if cfg.Mode == "Instant" then
+        line.Rotation = goal.Rotation + 109
+        cfg.Busy = true
+        task.spawn(function()
+            if UserInputService.TouchEnabled then SC_TriggerMobileButton() else SC_PressSpace() end
+            task.wait(0.2)
+            cfg.Busy = false
+        end)
+    else
+        local lr = line.Rotation % 360
+        local gr = goal.Rotation % 360
+        local sR = (gr + 102) % 360
+        local eR = (gr + 116) % 360
+        local success = (sR > eR and (lr >= sR or lr <= eR)) or (lr >= sR and lr <= eR)
+        if success then
+            cfg.Busy = true
+            task.spawn(function()
+                if UserInputService.TouchEnabled then SC_TriggerMobileButton() else SC_PressSpace() end
+                task.wait(0.05)
+                cfg.Busy = false
+            end)
+        end
+    end
+end)
