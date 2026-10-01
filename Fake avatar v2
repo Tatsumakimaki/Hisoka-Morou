@@ -1,110 +1,184 @@
 -- ========================================================
--- MIYAKO - FAKE AVATAR V2 BACKEND (FIXED & ANTI-RESET)
+-- MIYAKO - FAKE AVATAR V2 (PORTED FROM ORIGINAL SOURCE)
+-- Backend murni untuk GitHub Raw
 -- ========================================================
+
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
--- Simpan state di _G agar tidak ter-reset saat dropdown diganti
-_G.Miyako_OrigAvatarDesc = _G.Miyako_OrigAvatarDesc or nil
-_G.Miyako_FakeAvatarLoaded = _G.Miyako_FakeAvatarLoaded or false
-
-local PRESET_IDS = {
-    ["Purple King"]         = 1283674681,
-    ["Korblox"]             = 13416518,
-    ["Headless"]            = 261,
-    ["Dominus Flex"]        = 5312389,
-    ["Valkyrie Helm"]       = 16138964,
-    ["Slender"]             = 1714589254,
-    ["Stitchface"]          = 156828551,
-    ["Super Happy Face"]    = 246524956,
-    ["E-Boy Aesthetic"]     = 1856382941,
-    ["E-Girl Aesthetic"]    = 1928472911,
-    ["Hacker / Anonymous"]  = 138128374,
-    ["Guest 666"]           = 1845187,
-    ["Classic Noob"]        = 156,
-    ["Bacon Hair"]          = 1619854747,
-    ["Anime Style"]         = 2394819281,
-    ["Self Avatar"]         = LocalPlayer.UserId
+_G.Miyako_FakeAvatarConfig = _G.Miyako_FakeAvatarConfig or {
+    Enabled = false,
+    Preset = "Purple King",
+    TargetUsername = ""
 }
 
-local function getHumanoid()
-    local char = LocalPlayer.Character
-    return char and char:FindFirstChildOfClass("Humanoid")
-end
+local PresetIds = {
+    ["Self Avatar"] = LocalPlayer.UserId,
+    ["Random 1"] = 2888298851,
+    ["Random 2"] = 10074747755,
+    ["Random 3"] = 5209567453,
+    ["Random 4"] = 8991982843,
+    ["Random 5"] = 5796319029,
+    ["Random 6"] = 9744452117,
+    ["Random 7"] = 8476755006,
+    ["WoozyNate"] = 146089324,
+    ["Nicholas"] = 909635,
+    ["yvlyf"] = 181751703,
+    ["traevp"] = 471607078,
+    ["J0LLY"] = 1073847038,
+    ["LucashDev"] = 2525651744,
+    ["CEOofIsaac"] = 63238912,
+    ["Stealthy"] = 56602747,
+    ["Wildes"] = 40397833,
+    ["Talon"] = 75974130,
+    ["Relukt"] = 65042011,
+    ["Sammy"] = 2678001507,
+    ["Diesel"] = 9123921576,
+    ["S4ans03"] = 35439794,
+    ["Aura"] = 2275806428,
+    ["iJava"] = 276557820,
+    ["White Guy"] = 8843268357,
+    ["Purple King"] = 9070758608,
+    ["Kachaaaa Gay"] = 8956318334,
+    ["Mpruyyy"] = 8340163775
+}
 
-local function clearAccessories(char)
-    for _, item in ipairs(char:GetDescendants()) do
-        if item:IsA("Accessory") or item:IsA("Clothing") or item:IsA("ShirtGraphic") then
-            pcall(function() item:Destroy() end)
+local function LoadAppearanceIntoChar(appearance, character, head)
+    local items = appearance:GetChildren()
+    local function applyMesh(obj)
+        if obj:IsA("CharacterMesh") or obj:IsA("BodyColors") or obj:IsA("Shirt") or obj:IsA("Pants") then
+            local existing = character:FindFirstChild(obj.Name)
+            if existing and existing.ClassName == obj.ClassName then existing:Destroy() end
+            obj:Clone().Parent = character
+        end
+    end
+
+    for _, item in pairs(items) do
+        if item:IsA("Folder") or item:IsA("Model") then
+            for _, subItem in pairs(item:GetChildren()) do applyMesh(subItem) end
+        else
+            applyMesh(item)
+        end
+    end
+
+    for _, item in pairs(items) do
+        if item:IsA("SpecialMesh") and head then
+            local targetMesh = head:FindFirstChildOfClass("SpecialMesh") or Instance.new("SpecialMesh", head)
+            targetMesh.MeshType = Enum.MeshType.FileMesh
+            targetMesh.MeshId = item.MeshId
+            targetMesh.TextureId = item.TextureId
+        elseif item:IsA("Decal") and item.Name == "face" and head then
+            if head:FindFirstChild("face") then head.face:Destroy() end
+            item:Clone().Parent = head
+        end
+    end
+
+    for _, item in pairs(items) do
+        if item:IsA("Accessory") then
+            local clone = item:Clone()
+            local handle = clone:FindFirstChild("Handle")
+            if handle then
+                local att = handle:FindFirstChildOfClass("Attachment")
+                if att then
+                    local targetAtt = character:FindFirstChild(att.Name, true)
+                    if targetAtt then
+                        local weld = Instance.new("Weld")
+                        weld.Part0 = handle
+                        weld.Part1 = targetAtt.Parent
+                        weld.C0 = att.CFrame
+                        weld.C1 = targetAtt.CFrame
+                        weld.Parent = handle
+                    end
+                end
+                handle.CanCollide = false
+                handle.Massless = true
+                clone.Parent = character
+            end
         end
     end
 end
 
-local function applyTargetAvatar(userId)
-    local hum = getHumanoid()
-    local char = LocalPlayer.Character
-    if not hum or not char then return end
+local function ApplyFakeAvatar()
+    if not _G.Miyako_FakeAvatarConfig.Enabled then return end
 
-    -- Hanya simpan avatar asli jika belum pernah disimpan
-    if not _G.Miyako_OrigAvatarDesc then
-        pcall(function() _G.Miyako_OrigAvatarDesc = hum:GetAppliedDescription() end)
+    local character = LocalPlayer.Character
+    if not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
+    -- Tentukan target ID (Username atau Preset)
+    local selectedId = nil
+    local targetName = _G.Miyako_FakeAvatarConfig.TargetUsername
+    if targetName and targetName ~= "" then
+        local clean = targetName:gsub("^@", "")
+        local ok, userId = pcall(function() return Players:GetUserIdFromNameAsync(clean) end)
+        if ok and userId then selectedId = userId end
+    end
+
+    if not selectedId then
+        local preset = _G.Miyako_FakeAvatarConfig.Preset or "Purple King"
+        selectedId = PresetIds[preset] or LocalPlayer.UserId
     end
 
     task.spawn(function()
-        local success, desc = pcall(function()
-            return Players:GetHumanoidDescriptionFromUserId(userId)
+        local success, appearance = pcall(function()
+            return Players:GetCharacterAppearanceAsync(selectedId)
         end)
+        if not success or not appearance then return end
 
-        if success and desc then
-            clearAccessories(char)
-            task.wait(0.1)
-            -- Eksekusi ganda agar 100% tembus di executor apapun
-            pcall(function() hum:ApplyDescriptionClientServer(desc) end)
-            pcall(function() hum:ApplyDescription(desc) end) 
+        for _, obj in pairs(character:GetChildren()) do
+            if obj:IsA("Accessory") or obj:IsA("Shirt") or obj:IsA("Pants")
+            or obj:IsA("BodyColors") or obj:IsA("CharacterMesh") or obj:IsA("ShirtGraphic") then
+                obj:Destroy()
+            end
+        end
+
+        local head = character:FindFirstChild("Head")
+        if head then
+            for _, hObj in pairs(head:GetChildren()) do
+                if hObj:IsA("SpecialMesh") or hObj:IsA("Decal") then hObj:Destroy() end
+            end
+            local m = Instance.new("SpecialMesh", head)
+            m.MeshType = Enum.MeshType.Head
+            m.Scale = Vector3.new(1, 1, 1)
+        end
+
+        local scaleDefaults = { BodyDepthScale = 1, BodyHeightScale = 1, BodyWidthScale = 1, HeadScale = 1, BodyTypeScale = 0, BodyProportionScale = 0 }
+        for scaleName, val in pairs(scaleDefaults) do
+            local s = humanoid:FindFirstChild(scaleName)
+            if s then s.Value = val end
+        end
+
+        task.wait(0.1)
+        LoadAppearanceIntoChar(appearance, character, head)
+
+        pcall(function()
+            local info = Players:GetCharacterAppearanceInfoAsync(selectedId)
+            if head and info.assets then
+                for _, asset in pairs(info.assets) do
+                    if asset.assetType.name == "Face" then
+                        if head:FindFirstChild("face") then head.face:Destroy() end
+                        local f = Instance.new("Decal", head)
+                        f.Name = "face"
+                        f.Texture = "rbxassetid://" .. asset.id
+                        break
+                    end
+                end
+            end
+        end)
+    end)
+end
+
+_G.Miyako_ApplyFakeAvatar = ApplyFakeAvatar
+
+if not _G.Miyako_FakeAvatarHooked then
+    _G.Miyako_FakeAvatarHooked = true
+    LocalPlayer.CharacterAdded:Connect(function()
+        if _G.Miyako_FakeAvatarConfig and _G.Miyako_FakeAvatarConfig.Enabled then
+            task.wait(1)
+            ApplyFakeAvatar()
         end
     end)
 end
 
-local function restoreOriginal()
-    local hum = getHumanoid()
-    local char = LocalPlayer.Character
-    if hum and char and _G.Miyako_OrigAvatarDesc then
-        clearAccessories(char)
-        task.wait(0.1)
-        pcall(function() hum:ApplyDescriptionClientServer(_G.Miyako_OrigAvatarDesc) end)
-        pcall(function() hum:ApplyDescription(_G.Miyako_OrigAvatarDesc) end)
-    end
-end
-
--- Fungsi Utama yang dihubungkan ke GUI
-_G.Miyako_UpdateFakeAvatar = function()
-    if not _G.Miyako_FakeAvatarConfig or not _G.Miyako_FakeAvatarConfig.Enabled then
-        restoreOriginal()
-        return
-    end
-    
-    local userTarget = _G.Miyako_FakeAvatarConfig.TargetUsername
-    if userTarget and userTarget ~= "" then
-        task.spawn(function()
-            local s, id = pcall(function() return Players:GetUserIdFromNameAsync(userTarget) end)
-            if s and id then applyTargetAvatar(id) end
-        end)
-        return
-    end
-    
-    local preset = _G.Miyako_FakeAvatarConfig.Preset or "Purple King"
-    local presetId = PRESET_IDS[preset]
-    if presetId then applyTargetAvatar(presetId) end
-end
-
--- Mencegah bug respawn berlapis
-if not _G.Miyako_FakeAvatarLoaded then
-    _G.Miyako_FakeAvatarLoaded = true
-    LocalPlayer.CharacterAdded:Connect(function()
-        task.wait(1)
-        if _G.Miyako_UpdateFakeAvatar then _G.Miyako_UpdateFakeAvatar() end
-    end)
-end
-
--- Langsung panggil saat di-load
-_G.Miyako_UpdateFakeAvatar()
+ApplyFakeAvatar()
