@@ -1,0 +1,65 @@
+-- ========================================================
+-- MIYAKO - EMOTE SYSTEM BACKEND MODULE (Violence District)
+-- Backend murni untuk di-upload ke GitHub Raw
+-- ========================================================
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+_G.Miyako_EmoteConfig = _G.Miyako_EmoteConfig or {
+    Enabled = false,
+    SelectedEmote = "Friday Night",
+    LastEmote = "Friday Night"
+}
+
+local function getEmoteRemote()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if remotes then
+        return remotes:FindFirstChild("EmoteHandler", true)
+    end
+    return nil
+end
+
+local function stopAllEmoteAnimations()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local animator = hum and hum:FindFirstChildOfClass("Animator")
+    if animator then
+        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+            track:Stop(0.1)
+        end
+    end
+    local remote = getEmoteRemote()
+    if remote then
+        pcall(function() remote:FireServer("Stop") end)
+    end
+end
+
+local function playEmote(name)
+    if not _G.Miyako_EmoteConfig.Enabled then return end
+    if not name or name == "" then return end
+    
+    _G.Miyako_EmoteConfig.LastEmote = name
+    local remote = getEmoteRemote()
+    if remote then
+        pcall(function() remote:FireServer(name) end)
+    end
+end
+
+-- Function bridge untuk UI Obsidian utama
+_G.Miyako_PlayEmote = playEmote
+_G.Miyako_StopEmote = stopAllEmoteAnimations
+_G.Miyako_ReplayEmote = function()
+    local target = _G.Miyako_EmoteConfig.SelectedEmote or _G.Miyako_EmoteConfig.LastEmote
+    if target then
+        stopAllEmoteAnimations()
+        task.wait(0.08)
+        playEmote(target)
+    end
+end
+
+-- Eksekusi otomatis jika toggle aktif saat load
+if _G.Miyako_EmoteConfig.Enabled and _G.Miyako_EmoteConfig.SelectedEmote then
+    playEmote(_G.Miyako_EmoteConfig.SelectedEmote)
+end
