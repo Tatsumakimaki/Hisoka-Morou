@@ -7,6 +7,10 @@ getgenv().Miyako_SkillCheck = getgenv().Miyako_SkillCheck or {
     Busy = false
 }
 
+-- Sinkronisasi fallback jika dipanggil dari variabel lain
+getgenv().AutoSkillCheck = getgenv().AutoSkillCheck or false
+getgenv().SkillCheckMode = getgenv().SkillCheckMode or "Instant"
+
 if getgenv()._MiyakoSkillCheckLoaded then return end
 getgenv()._MiyakoSkillCheckLoaded = true
 
@@ -43,38 +47,62 @@ end
 local function SC_TriggerMobileButton()
     local b = SC_GetActionTarget()
     if b and b:IsA("GuiObject") then
-        local p, s = b.AbsolutePosition, b.AbsoluteSize
-        local i = GuiService:GetGuiInset()
-        local cx, cy = p.X + (s.X / 2) + i.X, p.Y + (s.Y / 2) + i.Y
-        pcall(function()
-            VirtualInputManager:SendTouchEvent(SC_TouchID, 0, cx, cy)
-            task.wait(0.01)
-            VirtualInputManager:SendTouchEvent(SC_TouchID, 2, cx, cy)
-        end)
+        -- Trigger langsung via firesignal (sangat stabil di mobile executor)
+        if firesignal then
+            pcall(function()
+                firesignal(b.MouseButton1Down)
+                firesignal(b.Activated)
+            end)
+        end
+        
+        -- Fallback sentuhan fisik virtual
+        if VirtualInputManager then
+            local p, s = b.AbsolutePosition, b.AbsoluteSize
+            local i = GuiService:GetGuiInset()
+            local cx, cy = p.X + (s.X / 2) + i.X, p.Y + (s.Y / 2) + i.Y
+            pcall(function()
+                VirtualInputManager:SendTouchEvent(SC_TouchID, 0, cx, cy)
+                task.wait(0.01)
+                VirtualInputManager:SendTouchEvent(SC_TouchID, 2, cx, cy)
+            end)
+        end
+    else
+        SC_PressSpace()
     end
 end
 
 RunService.RenderStepped:Connect(function()
+    -- Cek aktif baik dari Miyako_SkillCheck maupun variabel global getgenv
+    local isEnabled = (getgenv().Miyako_SkillCheck and getgenv().Miyako_SkillCheck.Enabled) or getgenv().AutoSkillCheck
+    local mode = (getgenv().Miyako_SkillCheck and getgenv().Miyako_SkillCheck.Mode) or getgenv().SkillCheckMode or "Instant"
     local cfg = getgenv().Miyako_SkillCheck
-    if not cfg or not cfg.Enabled or cfg.Busy then return end
+
+    if not isEnabled or (cfg and cfg.Busy) then return end
 
     local pGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if not pGui then return end
+
     local prompt = pGui:FindFirstChild("SkillCheckPromptGui")
     if not prompt then return end
+
     local check = prompt:FindFirstChild("Check")
     if not check or not check.Visible then return end
+
     local line = check:FindFirstChild("Line")
     local goal = check:FindFirstChild("Goal")
     if not line or not goal then return end
 
-    if cfg.Mode == "Instant" then
+    if mode == "Instant" then
         line.Rotation = goal.Rotation + 109
-        cfg.Busy = true
+        if cfg then cfg.Busy = true end
         task.spawn(function()
-            if UserInputService.TouchEnabled then SC_TriggerMobileButton() else SC_PressSpace() end
+            if UserInputService.TouchEnabled then
+                SC_TriggerMobileButton()
+            else
+                SC_PressSpace()
+            end
             task.wait(0.2)
-            cfg.Busy = false
+            if cfg then cfg.Busy = false end
         end)
     else
         local lr = line.Rotation % 360
@@ -83,11 +111,15 @@ RunService.RenderStepped:Connect(function()
         local eR = (gr + 116) % 360
         local success = (sR > eR and (lr >= sR or lr <= eR)) or (lr >= sR and lr <= eR)
         if success then
-            cfg.Busy = true
+            if cfg then cfg.Busy = true end
             task.spawn(function()
-                if UserInputService.TouchEnabled then SC_TriggerMobileButton() else SC_PressSpace() end
+                if UserInputService.TouchEnabled then
+                    SC_TriggerMobileButton()
+                else
+                    SC_PressSpace()
+                end
                 task.wait(0.05)
-                cfg.Busy = false
+                if cfg then cfg.Busy = false end
             end)
         end
     end
