@@ -1,0 +1,225 @@
+-- ==========================================
+-- STUN INDICATOR (PURPLE MINIMALIST - MIYAKO)
+-- ==========================================
+local Players      = game:GetService("Players")
+local RunService   = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer  = Players.LocalPlayer
+
+-- KONFIGURASI GLOBAL
+_G.Miyako_StunConfig = _G.Miyako_StunConfig or {
+    Enabled     = true,
+    SoundAlert  = true,
+    SoundChoice = "Default",
+    Range       = 500,
+    Volume      = 1.5
+}
+
+local StunSounds = {
+    ["Default"]       = "18843924331",
+    ["Clash Royale"]  = "114072050006157",
+    ["Blash"]         = "89068385567682",
+    ["Coin"]          = "75510526696824",
+    ["Kururin Kuru"]  = "119896940405402",
+    ["Spongebob"]     = "6835794541",
+    ["Fahhhh"]        = "123562480982353",
+    ["Cave"]          = "3173566193",
+    ["Aughhh"]        = "9095205664",
+    ["Samsung"]       = "6879335951",
+    ["iPhone"]        = "4203251375",
+    ["Siren"]         = "130677853589923",
+    ["Bonk"]          = "3930302009",
+    ["Vine Boom"]     = "6388488094",
+    ["Metal Pipe"]    = "9114713708",
+    ["Bruh"]          = "4275842574",
+    ["Hitmarker"]     = "160432334"
+}
+
+local Cache = {}
+local HeartbeatConn = nil
+
+local function TeamIs(plr, role)
+    if not plr or not plr.Team or not plr.Team.Name then return false end
+    local tn = string.lower(plr.Team.Name)
+    if role == "Killer" then return string.find(tn, "killer", 1, true) ~= nil end
+    if role == "Survivor" then return string.find(tn, "survivor", 1, true) ~= nil end
+    return false
+end
+
+local function GetSoundId()
+    local choice = _G.Miyako_StunConfig.SoundChoice or "Default"
+    return StunSounds[choice] or StunSounds["Default"]
+end
+
+local function IsStunned(char)
+    if not char then return false end
+    if char:GetAttribute("IsStunned") == true or char:GetAttribute("isStunned") == true then return true end
+    if char:GetAttribute("Stunned") == true or char:GetAttribute("stunned") == true then return true end
+    if char:GetAttribute("IsStun") == true or char:GetAttribute("Stun") == true then return true end
+    local ci = char:FindFirstChild("CheckInterractable")
+    if ci and (ci:GetAttribute("isStunned") == true or ci:GetAttribute("Stunned") == true) then return true end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        local sv = hum:FindFirstChild("StunValue")
+        if sv and sv.Value > 0 then return true end
+    end
+    return false
+end
+
+local function PlayStunSound(char)
+    if not _G.Miyako_StunConfig.SoundAlert then return end
+    pcall(function()
+        local attachTo = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+        if not attachTo then return end
+        local snd = Instance.new("Sound")
+        snd.Name = "MiyakoStunSound"
+        snd.SoundId = "rbxassetid://" .. tostring(GetSoundId())
+        snd.Volume = _G.Miyako_StunConfig.Volume or 1.5
+        snd.PlaybackSpeed = 1
+        snd.RollOffMaxDistance = _G.Miyako_StunConfig.Range or 500
+        snd.RollOffMinDistance = 10
+        snd.RollOffMode = Enum.RollOffMode.InverseTapered
+        snd.Parent = attachTo
+        snd:Play()
+        snd.Ended:Connect(function() pcall(function() snd:Destroy() end) end)
+        task.delay(5, function() pcall(function() if snd and snd.Parent then snd:Destroy() end end) end)
+    end)
+end
+
+local function CreateStunIndicator(char)
+    if Cache[char] then return Cache[char] end
+    local head = char:FindFirstChild("Head")
+    if not head then return nil end
+
+    local bbg = Instance.new("BillboardGui")
+    bbg.Name = "MiyakoPurpleStun"
+    bbg.Size = UDim2.fromOffset(125, 30)
+    bbg.StudsOffset = Vector3.new(0, 2.8, 0)
+    bbg.AlwaysOnTop = true
+    bbg.LightInfluence = 0
+    bbg.MaxDistance = _G.Miyako_StunConfig.Range or 500
+    bbg.Adornee = head
+    bbg.Parent = char
+
+    -- Frame Utama (Minimalist Purple Pill)
+    local main = Instance.new("Frame")
+    main.Name = "Pill"
+    main.AnchorPoint = Vector2.new(0.5, 0.5)
+    main.Position = UDim2.new(0.5, 0, 0.5, 0)
+    main.Size = UDim2.fromOffset(0, 0)
+    main.BackgroundColor3 = Color3.fromRGB(15, 10, 24)
+    main.BackgroundTransparency = 0.15
+    main.BorderSizePixel = 0
+    main.ClipsDescendants = true
+    main.Parent = bbg
+    Instance.new("UICorner", main).CornerRadius = UDim.new(1, 0)
+
+    -- Stroke Glow Ungu Neon
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(180, 75, 255)
+    stroke.Thickness = 1.4
+    stroke.Transparency = 0.2
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent = main
+
+    -- Gradient Halus pada Background
+    local grad = Instance.new("UIGradient")
+    grad.Rotation = 90
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 18, 75)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(14, 8, 22))
+    })
+    grad.Parent = main
+
+    -- Titik Lampu / Dot Ungu Terang
+    local dot = Instance.new("Frame")
+    dot.AnchorPoint = Vector2.new(0, 0.5)
+    dot.Position = UDim2.new(0, 10, 0.5, 0)
+    dot.Size = UDim2.fromOffset(7, 7)
+    dot.BackgroundColor3 = Color3.fromRGB(220, 130, 255)
+    dot.BorderSizePixel = 0
+    dot.Parent = main
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+    -- Teks STUNNED Bersih & Elegan
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -28, 1, 0)
+    label.Position = UDim2.new(0, 24, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamBold
+    label.Text = "STUNNED"
+    label.TextColor3 = Color3.fromRGB(245, 225, 255)
+    label.TextSize = 11
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextStrokeTransparency = 0.6
+    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    label.Parent = main
+
+    -- Animasi Pop-up Masuk Halus
+    TweenService:Create(main, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size = UDim2.fromOffset(115, 26),
+        BackgroundTransparency = 0.15
+    }):Play()
+
+    -- Animasi Denyut / Breathing Glow Halus
+    local animActive = true
+    task.spawn(function()
+        local t = 0
+        while animActive and bbg.Parent and main.Parent do
+            t = t + 0.05
+            local pulse = (math.sin(t * 3.5) + 1) * 0.5
+            stroke.Transparency = 0.15 + pulse * 0.35
+            dot.BackgroundTransparency = pulse * 0.3
+            task.wait(0.03)
+        end
+    end)
+
+    local function ExitAndDestroy()
+        animActive = false
+        TweenService:Create(main, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Size = UDim2.fromOffset(0, 0),
+            BackgroundTransparency = 1
+        }):Play()
+        task.delay(0.22, function() pcall(function() bbg:Destroy() end) end)
+    end
+
+    Cache[char] = { Gui = bbg, Exit = ExitAndDestroy }
+    return Cache[char]
+end
+
+_G.Miyako_PreviewStunSound = function()
+    local char = LocalPlayer.Character
+    if char then PlayStunSound(char) end
+end
+
+if HeartbeatConn then HeartbeatConn:Disconnect() end
+HeartbeatConn = RunService.Heartbeat:Connect(function()
+    if not _G.Miyako_StunConfig.Enabled then return end
+    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and TeamIs(p, "Killer") and p.Character then
+            local char = p.Character
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local dist = (hrp.Position - myRoot.Position).Magnitude
+                local stunned = IsStunned(char)
+                local data = Cache[char]
+                local wasStunned = data ~= nil
+
+                if stunned and dist <= (_G.Miyako_StunConfig.Range or 500) then
+                    if not wasStunned then
+                        PlayStunSound(char)
+                        CreateStunIndicator(char)
+                    end
+                else
+                    if wasStunned then
+                        if data.Exit then data.Exit() else pcall(function() data.Gui:Destroy() end) end
+                        Cache[char] = nil
+                    end
+                end
+            end
+        end
+    end
+end)
