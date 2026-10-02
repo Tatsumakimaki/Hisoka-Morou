@@ -1,0 +1,324 @@
+-- ========================================================
+-- MIYAKO AUTO PARRY V2 - STANDALONE RAW
+-- Features: Anti Fake Hit + Spacing Bait Detection + Safety + Aggressive
+-- ========================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+getgenv().Miyako_ParryV2Config = getgenv().Miyako_ParryV2Config or {
+    Enabled = false,
+    Safety = false,
+    Aggressive = false,
+    Circle = true,
+    Radius = 15,
+    FaceSensitivity = 0.7,
+    AutoCrouch = false,
+    AntiFake = true,
+    FacingAngle = 60
+}
+
+local Config = getgenv().Miyako_ParryV2Config
+
+if getgenv()._MiyakoParryV2Running then return end
+getgenv()._MiyakoParryV2Running = true
+
+local State = {
+    Cooldown = false,
+    CooldownThread = nil,
+    Adornment = nil,
+    LastParry = 0
+}
+
+local PARRY_IDS = {
+    ["122812055447896"] = "Veil lunge",
+    ["133963973694098"] = "Mayers Basic",
+    ["117042998468241"] = "Mayers lunge",
+    ["135002183282873"] = "cure lunge",
+    ["121216847022485"] = "cure Basic",
+    ["132817836308238"] = "Jeff Basic",
+    ["129784271201071"] = "Jeff lunge",
+    ["82666958311998"]  = "Jeff Frenzy",
+    ["78432063483146"]  = "Abyssal Basic",
+    ["118907603246885"] = "Abyssal lunge",
+    ["139369275981139"] = "Jason Basic",
+    ["110355011987939"] = "Jason lunge",
+    ["111920872708571"] = "Masked Basic",
+    ["105374834496520"] = "Masked lunge",
+    ["138720291317243"] = "Masked Tony",
+    ["106871536134254"] = "Masked Alex",
+    ["130593238885843"] = "Masked Cobra",
+    ["115244153053858"] = "Masked Cobra lunge",
+    ["74968262036854"]  = "Hidden Basic",
+    ["113255068724446"] = "Hidden lunge",
+    ["98163597193511"]  = "Hidden S1",
+    ["80411309607666"]  = "Abyssal S1"
+}
+
+local Attached = {}
+
+local function TeamIsKiller(plr)
+    if not plr or not plr.Team or not plr.Team.Name then return false end
+    return string.find(string.lower(plr.Team.Name), "killer", 1, true) ~= nil
+end
+
+local function IsDowned(char)
+    if not char then return false end
+    return char:GetAttribute("Knocked") == true or char:GetAttribute("IsHooked") == true
+end
+
+local function IsSafeToParry(char)
+    if not Config.Safety then return true end
+    if not char then return false end
+    local ci = char:FindFirstChild("CheckInterractable")
+    if ci then
+        if ci:GetAttribute("isVaulting") == true then return false end
+        if ci:GetAttribute("isRepairing") == true then return false end
+        if ci:GetAttribute("isUnhooking") == true then return false end
+        if ci:GetAttribute("isHealing") == true then return false end
+        if ci:GetAttribute("isSliding") == true then return false end
+    end
+    return true
+end
+
+local function IsKillerFacingMe(kHRP, myHRP, angleDeg, kChar, dist)
+    if not (kHRP and myHRP) then return false end
+    local toMe = (myHRP.Position - kHRP.Position)
+    local currentDist = dist or toMe.Magnitude
+    if toMe.Magnitude < 0.05 then return true end
+
+    local flatToMe = Vector3.new(toMe.X, 0, toMe.Z)
+    if flatToMe.Magnitude < 0.05 then return true end
+    flatToMe = flatToMe.Unit
+
+    -- 1. Anti Fake Direction (Cek Sudut Hadap Badan & Kepala)
+    local angle = math.rad(tonumber(angleDeg) or 60)
+    local look = kHRP.CFrame.LookVector
+    look = Vector3.new(look.X, 0, look.Z)
+    if look.Magnitude > 0.05 then look = look.Unit end
+    local bodyDot = look:Dot(flatToMe)
+
+    local head = kChar and kChar:FindFirstChild("Head")
+    local headDot = bodyDot
+    if head then
+        local hLook = head.CFrame.LookVector
+        hLook = Vector3.new(hLook.X, 0, hLook.Z)
+        if hLook.Magnitude > 0.05 then
+            headDot = hLook.Unit:Dot(flatToMe)
+        end
+    end
+
+    local need = math.cos(angle)
+    local isFacing = (bodyDot >= need) or (headDot >= need)
+    if not isFacing then return false end
+
+    -- 2. Anti Spacing / Backstep Bait (Deteksi Killer Mundur)
+    local kVel = kHRP.AssemblyLinearVelocity
+    local flatVel = Vector3.new(kVel.X, 0, kVel.Z)
+    if flatVel.Magnitude > 2 and currentDist > 5 then
+        local moveDot = flatVel.Unit:Dot(flatToMe)
+        if moveDot < -0.15 then
+            return false
+        end
+    end
+
+    return true
+end
+
+local function TapMobileParryButton()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return end
+    local survivorMob = playerGui:FindFirstChild("Survivor-mob")
+    local parryBtn = survivorMob and survivorMob:FindFirstChild("Controls") and survivorMob.Controls:FindFirstChild("Gui-mob")
+    if parryBtn and parryBtn.Visible then
+        if firesignal then
+            pcall(function()
+                firesignal(parryBtn.MouseButton1Down)
+                task.wait(0.01)
+                firesignal(parryBtn.MouseButton1Up)
+            end)
+        end
+    else
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(0, 0, 1, true, game, 0)
+            task.wait(0.01)
+            VirtualInputManager:SendMouseButtonEvent(0, 0, 1, false, game, 0)
+        end)
+    end
+end
+
+local function ExecuteParry()
+    if State.Cooldown then return end
+    pcall(function()
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        local items = remotes and remotes:FindFirstChild("Items")
+        local dagger = items and items:FindFirstChild("Parrying Dagger")
+        local parryRemote = dagger and dagger:FindFirstChild("parry")
+        if parryRemote then
+            for i = 1, 10 do parryRemote:FireServer() end
+        end
+        task.spawn(TapMobileParryButton)
+    end)
+end
+
+-- Listener cooldown parry
+task.spawn(function()
+    local remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+    local items = remotes and remotes:WaitForChild("Items", 5)
+    local dagger = items and items:WaitForChild("Parrying Dagger", 5)
+    local parryResultRemote = dagger and dagger:WaitForChild("parryResult", 5)
+    if parryResultRemote then
+        parryResultRemote.OnClientEvent:Connect(function(arg1, arg2)
+            local cdDur = tonumber(arg2) or ((arg1 == true) and 90 or 60)
+            State.Cooldown = true
+            if State.CooldownThread then task.cancel(State.CooldownThread) end
+            State.CooldownThread = task.delay(cdDur, function()
+                State.Cooldown = false
+            end)
+        end)
+    end
+end)
+
+local function AttachSensor(kChar)
+    if not kChar or Attached[kChar] then return end
+    Attached[kChar] = true
+    local humanoid = kChar:FindFirstChild("Humanoid") or kChar:WaitForChild("Humanoid", 5)
+    if not humanoid then return end
+    local animator = humanoid:FindFirstChildOfClass("Animator") or humanoid:WaitForChild("Animator", 5)
+    if not animator then return end
+
+    humanoid.ChildAdded:Connect(function(child)
+        if child:IsA("Animator") then
+            Attached[kChar] = nil
+            AttachSensor(kChar)
+        end
+    end)
+
+    kChar.AncestryChanged:Connect(function(_, parent)
+        if not parent then Attached[kChar] = nil end
+    end)
+
+    animator.AnimationPlayed:Connect(function(track)
+        local animId = track.Animation and track.Animation.AnimationId or ""
+        local id = animId:match("%d+")
+        local attackName = PARRY_IDS[id]
+        if not attackName then return end
+
+        if not Config.Enabled then return end
+        if State.Cooldown then return end
+
+        local myChar = LocalPlayer.Character
+        if IsDowned(myChar) or not IsSafeToParry(myChar) then return end
+        local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        local kHRP = kChar:FindFirstChild("HumanoidRootPart")
+        if not myHRP or not kHRP then return end
+
+        local startDistance = (myHRP.Position - kHRP.Position).Magnitude
+
+        if Config.AntiFake then
+            local ang = tonumber(Config.FacingAngle) or 60
+            if not IsKillerFacingMe(kHRP, myHRP, ang, kChar, startDistance) then
+                return
+            end
+        end
+
+        if Config.Aggressive then
+            local aggressiveRadius = 12
+            local detectionRadius = Config.Radius + 5
+            if startDistance > detectionRadius then return end
+            if startDistance <= aggressiveRadius then
+                ExecuteParry()
+            else
+                local tracker
+                local startTime = os.clock()
+                tracker = RunService.Heartbeat:Connect(function()
+                    if os.clock() - startTime >= 1.5 or State.Cooldown or not myHRP or not kHRP or IsDowned(myChar) then
+                        if tracker then tracker:Disconnect() end
+                        return
+                    end
+                    if Config.AntiFake then
+                        local ang = tonumber(Config.FacingAngle) or 60
+                        local curDist = (myHRP.Position - kHRP.Position).Magnitude
+                        if not IsKillerFacingMe(kHRP, myHRP, ang, kChar, curDist) then
+                            if tracker then tracker:Disconnect() end
+                            return
+                        end
+                    end
+                    if (myHRP.Position - kHRP.Position).Magnitude <= aggressiveRadius then
+                        ExecuteParry()
+                        if tracker then tracker:Disconnect() end
+                    end
+                end)
+            end
+        else
+            if startDistance > Config.Radius then return end
+            local myPosFlat = Vector3.new(myHRP.Position.X, 0, myHRP.Position.Z)
+            local kPosFlat = Vector3.new(kHRP.Position.X, 0, kHRP.Position.Z)
+            local flatDelta = myPosFlat - kPosFlat
+            if flatDelta.Magnitude > 0 then
+                local flatDirection = flatDelta.Unit
+                local kLookFlat = Vector3.new(kHRP.CFrame.LookVector.X, 0, kHRP.CFrame.LookVector.Z).Unit
+                if kLookFlat:Dot(flatDirection) < Config.FaceSensitivity then return end
+            end
+            ExecuteParry()
+        end
+    end)
+end
+
+local function TryAttach(p)
+    if p ~= LocalPlayer and TeamIsKiller(p) and p.Character then
+        AttachSensor(p.Character)
+    end
+end
+
+for _, p in pairs(Players:GetPlayers()) do
+    if p ~= LocalPlayer then
+        p.CharacterAdded:Connect(function() TryAttach(p) end)
+        p:GetPropertyChangedSignal("Team"):Connect(function() TryAttach(p) end)
+        if p.Character then TryAttach(p) end
+    end
+end
+
+Players.PlayerAdded:Connect(function(p)
+    if p ~= LocalPlayer then
+        p.CharacterAdded:Connect(function() TryAttach(p) end)
+        p:GetPropertyChangedSignal("Team"):Connect(function() TryAttach(p) end)
+    end
+end)
+
+-- ESP Circle
+RunService.RenderStepped:Connect(function()
+    local myChar = LocalPlayer.Character
+    local hrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if Config.Circle and Config.Enabled and hrp then
+        if not State.Adornment or State.Adornment.Parent ~= hrp then
+            if State.Adornment then State.Adornment:Destroy() end
+            State.Adornment = Instance.new("CylinderHandleAdornment")
+            State.Adornment.Name = "AutoParryCircleESP_V2"
+            State.Adornment.Height = 0.05
+            State.Adornment.Transparency = 0.3
+            State.Adornment.Adornee = hrp
+            State.Adornment.Parent = hrp
+            State.Adornment.ZIndex = 0
+            State.Adornment.AlwaysOnTop = false
+        end
+        local cR = Config.Radius
+        State.Adornment.Radius = cR
+        State.Adornment.InnerRadius = math.max(0.1, cR - 0.15)
+        State.Adornment.CFrame = CFrame.new(0, -3, 0) * CFrame.Angles(math.rad(90), 0, 0)
+        if State.Cooldown then
+            State.Adornment.Color3 = Color3.fromRGB(255, 128, 0)
+        elseif Config.Aggressive then
+            State.Adornment.Color3 = Color3.fromRGB(255, 0, 0)
+        else
+            State.Adornment.Color3 = Color3.fromRGB(0, 255, 255)
+        end
+    elseif State.Adornment then
+        State.Adornment:Destroy()
+        State.Adornment = nil
+    end
+end)
