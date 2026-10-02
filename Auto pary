@@ -1,6 +1,5 @@
 -- ========================================================
--- MIYAKO AUTO PARRY V2 - STANDALONE RAW
--- Features: Anti Fake Hit + Spacing Bait Detection + Safety + Aggressive
+-- MIYAKO AUTO PARRY V2 - STANDALONE RAW (OPTIMIZED ANTI-FAKE & BAIT)
 -- ========================================================
 
 local Players = game:GetService("Players")
@@ -116,12 +115,12 @@ local function IsKillerFacingMe(kHRP, myHRP, angleDeg, kChar, dist)
     local isFacing = (bodyDot >= need) or (headDot >= need)
     if not isFacing then return false end
 
-    -- 2. Anti Spacing / Backstep Bait (Deteksi Killer Mundur)
+    -- 2. Diperketat: Deteksi Killer Mundur / Memukul Sambil Mundur (Spacing/Bait)[span_3](start_span)[span_3](end_span)
     local kVel = kHRP.AssemblyLinearVelocity
     local flatVel = Vector3.new(kVel.X, 0, kVel.Z)
-    if flatVel.Magnitude > 2 and currentDist > 5 then
+    if flatVel.Magnitude > 1.2 then
         local moveDot = flatVel.Unit:Dot(flatToMe)
-        if moveDot < -0.15 then
+        if moveDot < -0.05 then
             return false
         end
     end
