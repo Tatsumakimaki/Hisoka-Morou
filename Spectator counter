@@ -1,0 +1,122 @@
+-- ========================================================
+-- MIYAKO SPECTATOR SYSTEM (STANDALONE RAW)
+-- ========================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local LocalPlayer = Players.LocalPlayer
+
+getgenv().Miyako_SpectatorConfig = getgenv().Miyako_SpectatorConfig or {
+    CounterEnabled = false,
+    AntiSpectator = false
+}
+
+local Config = getgenv().Miyako_SpectatorConfig
+local GuiInstance = nil
+local LabelInstance = nil
+
+-- CONTAINER GUI
+local function GetContainer()
+    local ok, res = pcall(function() return CoreGui end)
+    if ok and res then return res end
+    return LocalPlayer:WaitForChild("PlayerGui", 5) or LocalPlayer:FindFirstChildOfClass("PlayerGui")
+end
+
+-- BUAT TAMPILAN COUNTER
+local function CreateCounterUI()
+    if GuiInstance then GuiInstance:Destroy() end
+    local parent = GetContainer()
+    if not parent then return end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "MiyakoSpectatorGui"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.Parent = parent
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.fromOffset(135, 28)
+    frame.Position = UDim2.new(0.5, 0, 0.05, 0)
+    frame.AnchorPoint = Vector2.new(0.5, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 10, 24)
+    frame.BackgroundTransparency = 0.2
+    frame.BorderSizePixel = 0
+    frame.Parent = gui
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(1, 0)
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(180, 75, 255)
+    stroke.Thickness = 1.2
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent = frame
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.fromScale(1, 1)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 11
+    lbl.TextColor3 = Color3.fromRGB(240, 220, 255)
+    lbl.Text = "👁️️ Spectators: 0"
+    lbl.Parent = frame
+
+    GuiInstance = gui
+    LabelInstance = lbl
+end
+
+local function RemoveCounterUI()
+    if GuiInstance then
+        GuiInstance:Destroy()
+        GuiInstance = nil
+        LabelInstance = nil
+    end
+end
+
+-- UPDATE HITUNGAN PENONTON
+local function UpdateCount()
+    if not Config.CounterEnabled then return end
+    local count = 0
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            pcall(function()
+                if plr:GetAttribute("isspectating") == true or plr:GetAttribute("spectate") == true then
+                    count = count + 1
+                end
+            end)
+        end
+    end
+    if LabelInstance then
+        LabelInstance.Text = "👁️ Spectators: " .. tostring(count)
+    end
+end
+
+-- LOOP UTAMA
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if Config.CounterEnabled then
+            if not GuiInstance then CreateCounterUI() end
+            pcall(UpdateCount)
+        else
+            if GuiInstance then RemoveCounterUI() end
+        end
+
+        if Config.AntiSpectator then
+            local char = LocalPlayer.Character
+            if char then
+                pcall(function()
+                    char:SetAttribute("ExcludeSpectate", true)
+                    char:SetAttribute("SpectateBlocked", true)
+                end)
+            end
+        else
+            local char = LocalPlayer.Character
+            if char and char:GetAttribute("SpectateBlocked") then
+                pcall(function()
+                    char:SetAttribute("ExcludeSpectate", nil)
+                    char:SetAttribute("SpectateBlocked", nil)
+                end)
+            end
+        end
+    end
+end)
