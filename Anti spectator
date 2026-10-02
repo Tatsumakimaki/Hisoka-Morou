@@ -1,0 +1,68 @@
+-- ========================================================
+-- MIYAKO ANTI SPECTATOR (STANDALONE RAW)
+-- ========================================================
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+getgenv().Miyako_AntiSpectator = getgenv().Miyako_AntiSpectator or {
+    Enabled = true
+}
+
+local Config = getgenv().Miyako_AntiSpectator
+
+-- Cegah duplicate instance loop
+if getgenv()._MiyakoAntiSpectatorRunning then return end
+getgenv()._MiyakoAntiSpectatorRunning = true
+
+local function ApplyAntiSpectate(char)
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+
+    pcall(function()
+        -- 1. Pasang tag & attribute pengecualian filter getSpectatablePlayers
+        char:SetAttribute("ExcludeSpectate", true)
+        char:SetAttribute("SpectateBlocked", true)
+        LocalPlayer:SetAttribute("SpectateBlocked", true)
+
+        -- 2. Trik desinkronisasi CameraSubject lokal tanpa bikin karakter rusak
+        if hum then
+            hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+        end
+    end)
+end
+
+local function RemoveAntiSpectate(char)
+    if not char then return end
+    pcall(function()
+        char:SetAttribute("ExcludeSpectate", nil)
+        char:SetAttribute("SpectateBlocked", nil)
+        LocalPlayer:SetAttribute("SpectateBlocked", nil)
+    end)
+end
+
+-- Loop proteksi berkala
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        local char = LocalPlayer.Character
+        if Config.Enabled then
+            if char and char.Parent then
+                ApplyAntiSpectate(char)
+            end
+        else
+            if char and char.Parent and char:GetAttribute("SpectateBlocked") then
+                RemoveAntiSpectate(char)
+            end
+        end
+    end
+end)
+
+-- Listener saat respawn / ganti karakter
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    task.wait(1)
+    if Config.Enabled then
+        ApplyAntiSpectate(newChar)
+    end
+end)
